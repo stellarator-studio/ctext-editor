@@ -6,8 +6,9 @@
  */
 import { Fragment, Slice, type Mark, type Node as PMNode } from 'prosemirror-model';
 import { Plugin } from 'prosemirror-state';
+import { freshIid } from '../core/ids';
 
-let nextIid = 1_000_000;
+
 
 function sanitize(fragment: Fragment, remap: Map<number, number>): Fragment {
   const nodes: PMNode[] = [];
@@ -15,7 +16,7 @@ function sanitize(fragment: Fragment, remap: Map<number, number>): Fragment {
     if (n.type.name === 'seq') return;
     const marks = n.marks.map((m: Mark) => {
       if (!('iid' in m.attrs)) return m;
-      if (!remap.has(m.attrs.iid)) remap.set(m.attrs.iid, nextIid++);
+      if (!remap.has(m.attrs.iid)) remap.set(m.attrs.iid, freshIid());
       return m.type.create({ ...m.attrs, iid: remap.get(m.attrs.iid) });
     });
     const copy = n.isText ? n.type.schema.text(n.text!, marks) : n.isLeaf ? n.mark(marks) : n.copy(sanitize(n.content, remap)).mark(marks);

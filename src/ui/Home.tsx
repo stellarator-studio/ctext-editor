@@ -1,0 +1,108 @@
+import { useEffect, useState } from 'preact/hooks';
+import type { Project } from '../store/db';
+import { persistent } from '../store/db';
+import { deleteProject, download, listProjects, newProject, projectFromFile, projectToFile, saveProject } from '../store/projects';
+import { toDoc } from '../core/toDoc';
+import { buildPageIndex } from '../core/pageIndex';
+import { openProject } from './App';
+
+function summary(text: string) {
+  const pages = buildPageIndex(toDoc(text)).filter((p) => p.markerPos !== null).length;
+  return `${text.length.toLocaleString()} 字元・${pages} 頁`;
+}
+
+export function Home() {
+  const [list, setList] = useState<Project[]>([]);
+  const [text, setText] = useState('');
+  const [title, setTitle] = useState('');
+  const [error, setError] = useState('');
+
+  const refresh = async () => setList(await listProjects());
+  useEffect(() => void refresh(), []);
+
+  const create = async () => {
+    if (!text.trim()) return;
+    const p = await saveProject(newProject(text, title.trim() || undefined));
+    openProject(p.id);
+  };
+
+  const importFile = async (e: Event) => {
+    const f = (e.target as HTMLInputElement).files?.[0];
+    if (!f) return;
+    try {
+      const p = await saveProject(await projectFromFile(await f.text()));
+      await refresh();
+      openProject(p.id);
+    } catch (err) {
+      setError(String((err as Error).message));
+    }
+  };
+
+  return (
+    <main class="home">
+      <header class="home-head">
+        <h1>cText Editor</h1>
+        <p class="muted">輔助 cText 電子化整理：貼上 cText 編輯框中的文字 → 對照原典逐頁校對 → 匯出貼回 cText。資料只存在這個瀏覽器中。</p>
+        {!persistent && <p class="warn">此瀏覽器無法使用 IndexedDB（可能是私密視窗），關閉分頁後資料會遺失。請記得匯出專案檔。</p>}
+      </header>
+
+      <section class="card">
+        <h2>新專案</h2>
+        <label class="field">
+          <span>標題（可留空，自動取第一個標題）</span>
+          <input value={title} onInput={(e) => setTitle((e.target as HTMLInputElement).value)} />
+        </label>
+        <label class="field">
+          <span>從 cText 編輯框複製的文字</span>
+          <textarea id="newText" rows={8} value={text} onInput={(e) => setText((e.target as HTMLTextAreaElement).value)} placeholder="<scanbegin file=… page=… />…" />
+        </label>
+        <div class="row">
+          <button class="primary" id="create" disabled={!text.trim()} onClick={create}>
+            建立並開啟
+          </button>
+          {text.trim() && <span class="muted">{summary(text)}</span>}
+        </div>
+      </section>
+
+      <section class="card">
+        <div class="row spread">
+          <h2>我的專案</h2>
+          <label class="button">
+            匯入專案檔…
+            <input type="file" accept=".json,application/json" hidden onChange={importFile} />
+          </label>
+        </div>
+        {error && <p class="warn">{error}</p>}
+        {list.length === 0 ? (
+          <p class="muted">尚無專案。</p>
+        ) : (
+          <ul class="project-list">
+            {list.map((p) => (
+              <li key={p.id}>
+                <a href={`#p=${encodeURIComponent(p.id)}`} class="project-title">
+                  {p.title}
+                </a>
+                <span class="muted">
+                  {summary(p.text)}・已校對 {Object.values(p.proofread).filter((s) => s.done).length} 頁・{new Date(p.updatedAt).toLocaleString()}
+                </span>
+                <span class="row tight">
+                  <button onClick={() => download(projectToFile(p), `${p.title}.ctext-project.json`)}>匯出</button>
+                  <button
+                    class="danger"
+                    onClick={async () => {
+                      if (!confirm(`刪除「${p.title}」？此動作無法復原（建議先匯出專案檔）。`)) return;
+                      await deleteProject(p.id);
+                      await refresh();
+                    }}
+                  >
+                    刪除
+                  </button>
+                </span>
+              </li>
+            ))}
+          </ul>
+        )}
+      </section>
+    </main>
+  );
+}
