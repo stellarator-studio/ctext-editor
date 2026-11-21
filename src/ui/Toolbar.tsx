@@ -2,7 +2,8 @@ import { useEffect, useState } from 'preact/hooks';
 import { NodeSelection, type Command } from 'prosemirror-state';
 import { undo, redo } from 'prosemirror-history';
 import type { Node as PMNode } from 'prosemirror-model';
-import { editorTick, getView, showSeq } from '../app/state';
+import { breakMode, editorTick, getView, sideTab, showSeq } from '../app/state';
+import { EntryForm } from './AnnotationPanel';
 import {
   applyEntity,
   entityAt,
@@ -58,6 +59,16 @@ export function Toolbar() {
           ␣ 空格
         </button>
         <button onClick={() => run(splitPage)} title="在游標處分頁 (Ctrl+Enter)">✂ 分頁</button>
+        <button
+          aria-pressed={breakMode.value}
+          onClick={() => {
+            breakMode.value = !breakMode.value;
+            getView()?.focus();
+          }}
+          title="點擊斷行模式：在字間點一下插入換行（Shift+點擊＝分頁）。對照圖片逐列斷行用。"
+        >
+          ✎ 點擊斷行
+        </button>
         <span class="sep" />
         <label class="check" title="顯示 seq 句子錨點（翻譯對齊用，可拖曳、不可刪除）">
           <input type="checkbox" checked={showSeq.value} onChange={(e) => (showSeq.value = (e.target as HTMLInputElement).checked)} /> seq
@@ -153,6 +164,7 @@ function EntityInspector() {
   const [id, setId] = useState('');
   const [type, setType] = useState('place');
   const [extra, setExtra] = useState('');
+  const [adding, setAdding] = useState(false);
   const key = current ? String(current.mark.attrs.iid) : 'new';
   useEffect(() => {
     setId(current?.mark.attrs.entityid ?? '');
@@ -186,6 +198,20 @@ function EntityInspector() {
         {current ? '更新' : '套用'}
       </button>
       {current && <button onClick={() => run(removeEntity)}>移除</button>}
+      <button onClick={() => setAdding(true)} disabled={!id.trim()} title="把這個詞與 entity 加入全域字典，供其他地方搜尋候選">
+        加入字典
+      </button>
+      {adding && (
+        <div class="popover">
+          <EntryForm
+            initial={{ surface: current ? v.state.doc.textBetween(current.from, current.to, '', '') : v.state.doc.textBetween(v.state.selection.from, v.state.selection.to, '', ''), entityid: id, type, extra: parseExtra(extra) }}
+            onDone={() => {
+              setAdding(false);
+              sideTab.value = 'annotate';
+            }}
+          />
+        </div>
+      )}
     </div>
   );
 }

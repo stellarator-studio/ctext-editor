@@ -1,10 +1,11 @@
 import { useEffect, useState } from 'preact/hooks';
 import type { Project } from '../store/db';
 import { persistent } from '../store/db';
-import { deleteProject, download, listProjects, newProject, projectFromFile, projectToFile, saveProject } from '../store/projects';
+import { deleteProject, download, guessTitle, listProjects, newProject, projectFromFile, projectToFile, saveProject } from '../store/projects';
 import { toDoc } from '../core/toDoc';
 import { buildPageIndex } from '../core/pageIndex';
 import { openProject } from './App';
+import { hasScanTags, plainToCtext, type PlainOptions } from '../core/plainText';
 
 function summary(text: string) {
   const pages = buildPageIndex(toDoc(text)).filter((p) => p.markerPos !== null).length;
@@ -16,13 +17,18 @@ export function Home() {
   const [text, setText] = useState('');
   const [title, setTitle] = useState('');
   const [error, setError] = useState('');
+  const [plain, setPlain] = useState<PlainOptions & { convert: boolean }>({ convert: true, file: '', startPage: 1, linesAreColumns: true, blankLineIsPage: true });
+  const isPlain = text.trim() !== '' && !hasScanTags(text);
+  const finalText = () => (isPlain && plain.convert ? plainToCtext(text, plain) : text);
+  const setOpt = (patch: Partial<typeof plain>) => setPlain({ ...plain, ...patch });
 
   const refresh = async () => setList(await listProjects());
   useEffect(() => void refresh(), []);
 
   const create = async () => {
     if (!text.trim()) return;
-    const p = await saveProject(newProject(text, title.trim() || undefined));
+    const t = finalText();
+    const p = await saveProject(newProject(t, title.trim() || guessTitle(text)));
     openProject(p.id);
   };
 
@@ -56,11 +62,38 @@ export function Home() {
           <span>從 cText 編輯框複製的文字</span>
           <textarea id="newText" rows={8} value={text} onInput={(e) => setText((e.target as HTMLTextAreaElement).value)} placeholder="<scanbegin file=… page=… />…" />
         </label>
+        {isPlain && (
+          <fieldset class="plain-opts">
+            <legend>這段文字沒有 scan 標籤（例如 OCR 文字）</legend>
+            <label class="check">
+              <input type="checkbox" id="plainConvert" checked={plain.convert} onChange={(e) => setOpt({ convert: (e.target as HTMLInputElement).checked })} />
+              加上頁與換行標記，之後可用「點擊斷行」對照圖片調整
+            </label>
+            {plain.convert && (
+              <div class="row tight">
+                <label class="ifield">
+                  <span>file id</span>
+                  <input id="plainFile" value={plain.file} onInput={(e) => setOpt({ file: (e.target as HTMLInputElement).value.trim() })} size={9} placeholder="cText 掃描檔號" />
+                </label>
+                <label class="ifield">
+                  <span>起始頁</span>
+                  <input type="number" min={0} value={plain.startPage} onInput={(e) => setOpt({ startPage: Number((e.target as HTMLInputElement).value) || 1 })} style={{ width: '5em' }} />
+                </label>
+                <label class="check small">
+                  <input type="checkbox" checked={plain.linesAreColumns} onChange={(e) => setOpt({ linesAreColumns: (e.target as HTMLInputElement).checked })} /> 每行＝原書一列
+                </label>
+                <label class="check small">
+                  <input type="checkbox" checked={plain.blankLineIsPage} onChange={(e) => setOpt({ blankLineIsPage: (e.target as HTMLInputElement).checked })} /> 空行＝換頁
+                </label>
+              </div>
+            )}
+          </fieldset>
+        )}
         <div class="row">
-          <button class="primary" id="create" disabled={!text.trim()} onClick={create}>
+          <button class="primary" id="create" disabled={!text.trim() || (isPlain && plain.convert && !plain.file)} onClick={create}>
             建立並開啟
           </button>
-          {text.trim() && <span class="muted">{summary(text)}</span>}
+          {text.trim() && <span class="muted">{summary(finalText())}</span>}
         </div>
       </section>
 

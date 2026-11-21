@@ -217,3 +217,13 @@ describe.runIf(existsSync(resolve(SAMPLES, 'content.txt')))('local samples', () 
     }
   });
 });
+
+describe('entityAt', () => {
+  it('does not report the preceding entity when the cursor is inside the next text', () => {
+    let s = EditorState.create({ doc: toDoc('<entity entityid="1" type="place">緬甸</entity>與暹羅') });
+    s = s.apply(s.tr.setSelection(TextSelection.create(s.doc, posOf(s, '暹'))));
+    expect(entityAt(s)).toBeNull();
+    s = s.apply(s.tr.setSelection(TextSelection.create(s.doc, posOf(s, '與'))));
+    expect(entityAt(s)?.mark.attrs.entityid).toBe('1'); // right at the boundary
+  });
+});

@@ -11,6 +11,8 @@ export interface Diagnostic {
   to: number;
   severity: Severity;
   message: string;
+  /** an automatic fix the UI can offer */
+  fix?: 'halfwidth';
 }
 
 /** Half-width punctuation that cText asks not to use in Chinese texts. */
@@ -58,7 +60,7 @@ export function validate(doc: PMNode, pages: Page[]): Diagnostic[] {
       if (!/^\/?(picture|character)$/.test(name)) out.push({ from: pos, to: pos + 1, severity: 'warning', message: `未知或未配對的標籤 <${name}>（將原樣保留）` });
     } else if (t === 'text') {
       for (const m of node.text!.matchAll(HALF_WIDTH)) {
-        out.push({ from: pos + m.index!, to: pos + m.index! + 1, severity: 'warning', message: `半形標點「${m[0]}」，cText 中文文獻應使用全形` });
+        out.push({ from: pos + m.index!, to: pos + m.index! + 1, severity: 'warning', message: `半形標點「${m[0]}」，cText 中文文獻應使用全形`, fix: 'halfwidth' });
       }
     }
     return false;

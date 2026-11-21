@@ -1,4 +1,5 @@
 import { db, type FileMapping, type Project } from './db';
+import type { DictEntry } from '../core/annotate';
 
 const now = () => new Date().toISOString();
 const newId = () => (crypto.randomUUID ? crypto.randomUUID() : `p${Date.now()}${Math.random().toString(36).slice(2)}`);
@@ -48,6 +49,7 @@ export async function projectFromFile(json: string): Promise<Project> {
     ...newProject(p.text, p.title),
     originalText: p.originalText ?? p.text,
     proofread: p.proofread ?? {},
+    rejected: p.rejected ?? [],
     ...(exists ? { title: `${p.title}（匯入）` } : { id: p.id, createdAt: p.createdAt }),
   };
 }
@@ -80,4 +82,42 @@ export function download(blob: Blob, filename: string) {
   a.download = filename;
   a.click();
   setTimeout(() => URL.revokeObjectURL(a.href), 1000);
+}
+
+// ---- annotation dictionary ----
+
+export const newEntryId = newId;
+
+export async function listDictionary(): Promise<DictEntry[]> {
+  const all = await (await db()).getAll('dictionary');
+  return all.sort((a, b) => a.surface.localeCompare(b.surface, 'zh-Hant') || a.entityid.localeCompare(b.entityid));
+}
+export async function saveEntry(e: DictEntry) {
+  await (await db()).put('dictionary', e);
+}
+export async function deleteEntry(id: string) {
+  await (await db()).delete('dictionary', id);
+}
+
+const DICT_FORMAT = 'ctext-editor-dictionary';
+export function dictionaryToFile(es: DictEntry[]): Blob {
+  return new Blob([JSON.stringify({ format: DICT_FORMAT, version: 1, entries: es }, null, 1)], { type: 'application/json' });
+}
+export function dictionaryFromFile(json: string): DictEntry[] {
+  const data = JSON.parse(json);
+  if (data?.format !== DICT_FORMAT || !Array.isArray(data.entries)) throw new Error('不是 annotation 字典檔');
+  return data.entries
+    .filter((e: DictEntry) => typeof e.surface === 'string' && typeof e.entityid === 'string')
+    .map(
+      (e: Partial<DictEntry>): DictEntry => ({
+        surface: e.surface!,
+        entityid: e.entityid!,
+        type: e.type || 'place',
+        extra: e.extra ?? {},
+        variants: e.variants ?? [],
+        ...(e.note ? { note: e.note } : {}),
+        id: e.id || newId(),
+        source: 'import',
+      }),
+    );
 }

@@ -23,7 +23,9 @@ import { pageGuard } from '../editor/pageGuard';
 import { deleteAdjacentAtom } from '../editor/atomCommands';
 import { splitPage } from '../editor/pageCommands';
 import { insertScanBreak } from '../editor/commands';
-import { listMappings, saveProject } from '../store/projects';
+import { listDictionary, listMappings, saveProject } from '../store/projects';
+import type { DictEntry } from '../core/annotate';
+import { clickBreak } from '../editor/clickBreak';
 import type { FileMapping, Project } from '../store/db';
 
 // ---------------------------------------------------------------- signals
@@ -39,7 +41,11 @@ export const editorTick = signal(0);
 export const mode = signal<'wysiwyg' | 'source'>('wysiwyg');
 export const saveStatus = signal<'saved' | 'dirty' | 'saving' | 'error'>('saved');
 export const showSeq = signal(true);
-export const sideTab = signal<'compare' | 'issues' | 'files'>('compare');
+export const sideTab = signal<'compare' | 'annotate' | 'issues' | 'files'>('compare');
+/** global annotation dictionary, by entry id */
+export const dictionary = signal<Map<string, DictEntry>>(new Map());
+/** click-to-break mode: clicking in the text inserts a scanbreak (Shift: page split) */
+export const breakMode = signal(false);
 export const mappings = signal<Map<string, FileMapping>>(new Map());
 /** Local scan images chosen from a folder: file id → (image number → object URL). Not persisted. */
 export const localImages = signal<Map<string, Map<number, string>>>(new Map());
@@ -67,6 +73,7 @@ function plugins() {
     }),
     keymap(baseKeymap),
     dropCursor({ color: '#d9822b', width: 3 }),
+    clickBreak(() => breakMode.value),
   ];
 }
 
@@ -171,6 +178,39 @@ export function updateProject(patch: Partial<Project>) {
   if (!p) return;
   project.value = { ...p, ...patch };
   scheduleSave();
+}
+
+export async function loadDictionary() {
+  dictionary.value = new Map((await listDictionary()).map((e) => [e.id, e]));
+}
+
+/** Select a document range in the editor (e.g. an annotation candidate) and scroll to it. */
+export function selectRange(from: number, to: number) {
+  if (!view) return;
+  const doc = view.state.doc;
+  view.dispatch(view.state.tr.setSelection(TextSelection.create(doc, Math.max(0, from), Math.min(to, doc.content.size))).scrollIntoView());
+  view.focus();
+}
+
+// ---------------------------------------------------------------- layout (per-viewer, localStorage)
+
+function stored(key: string, fallback: number): number {
+  try {
+    const v = Number(localStorage.getItem(key));
+    return Number.isFinite(v) && v > 0 ? v : fallback;
+  } catch {
+    return fallback;
+  }
+}
+export const pagesWidth = signal(stored('ct.pagesWidth', 150));
+export const sideWidth = signal(stored('ct.sideWidth', 0)); // 0 = default (fraction)
+export function persistLayout() {
+  try {
+    localStorage.setItem('ct.pagesWidth', String(pagesWidth.value));
+    localStorage.setItem('ct.sideWidth', String(sideWidth.value));
+  } catch {
+    /* storage unavailable: layout just isn't remembered */
+  }
 }
 
 export async function loadMappings() {

@@ -16,7 +16,12 @@ import {
   unmountEditor,
   updateProject,
   diagnostics,
+  pagesWidth,
+  sideWidth,
+  persistLayout,
+  breakMode,
 } from '../app/state';
+import { AnnotationPanel } from './AnnotationPanel';
 import { download, projectToFile } from '../store/projects';
 import { openProject } from './App';
 import { Toolbar } from './Toolbar';
@@ -38,10 +43,54 @@ function EditorPane() {
     resumeState = null;
     return () => unmountEditor();
   }, []);
-  return <div ref={ref} class={`pm-host ${showSeq.value ? '' : 'hide-seq'}`} />;
+  return <div ref={ref} class={`pm-host ${showSeq.value ? '' : 'hide-seq'} ${breakMode.value ? 'break-mode' : ''}`} />;
 }
 
 type SourceViewT = typeof import('./SourceView').SourceView;
+
+/** Draggable column divider. Arrow keys move it, double-click resets. */
+function Splitter({ label, onDrag, onReset }: { label: string; onDrag: (dx: number) => void; onReset: () => void }) {
+  const down = (e: PointerEvent) => {
+    const el = e.currentTarget as HTMLElement;
+    el.setPointerCapture(e.pointerId);
+    el.classList.add('dragging');
+    let last = e.clientX;
+    const move = (ev: PointerEvent) => {
+      onDrag(ev.clientX - last);
+      last = ev.clientX;
+    };
+    const up = () => {
+      el.classList.remove('dragging');
+      el.removeEventListener('pointermove', move);
+      el.removeEventListener('pointerup', up);
+      persistLayout();
+    };
+    el.addEventListener('pointermove', move);
+    el.addEventListener('pointerup', up);
+    e.preventDefault();
+  };
+  return (
+    <div
+      class="splitter"
+      role="separator"
+      aria-orientation="vertical"
+      aria-label={label}
+      tabIndex={0}
+      title={`${label}（拖曳調整，雙擊還原）`}
+      onPointerDown={down}
+      onDblClick={() => {
+        onReset();
+        persistLayout();
+      }}
+      onKeyDown={(e) => {
+        if (e.key !== 'ArrowLeft' && e.key !== 'ArrowRight') return;
+        onDrag(e.key === 'ArrowLeft' ? -24 : 24);
+        persistLayout();
+        e.preventDefault();
+      }}
+    />
+  );
+}
 
 export function Workspace() {
   const p = project.value!;
@@ -69,6 +118,15 @@ export function Workspace() {
 
   const errors = diagnostics.value.filter((d) => d.severity === 'error').length;
 
+  const grid = useRef<HTMLDivElement>(null);
+  const dragSide = (dx: number) => {
+    const total = grid.current?.clientWidth ?? window.innerWidth;
+    const current = sideWidth.value || grid.current?.querySelector<HTMLElement>('.pane-side')?.offsetWidth || total * 0.45;
+    sideWidth.value = Math.round(Math.min(Math.max(current - dx, 260), total - pagesWidth.value - 320));
+  };
+  const dragPages = (dx: number) => (pagesWidth.value = Math.round(Math.min(Math.max(pagesWidth.value + dx, 90), 320)));
+  const columns = `${pagesWidth.value}px 6px minmax(300px, 1.1fr) 6px ${sideWidth.value ? `${sideWidth.value}px` : 'minmax(0, 1fr)'}`;
+
   return (
     <div class="workspace">
       <header class="topbar">
@@ -92,10 +150,11 @@ export function Workspace() {
         </button>
       </header>
 
-      <div class="main-grid">
+      <div class="main-grid" ref={grid} style={{ gridTemplateColumns: columns }}>
         <aside class="pane pane-pages">
           <PageList />
         </aside>
+        <Splitter label="頁面清單寬度" onDrag={dragPages} onReset={() => (pagesWidth.value = 150)} />
         <section class="pane pane-editor">
           {mode.value === 'wysiwyg' ? (
             <>
@@ -106,10 +165,14 @@ export function Workspace() {
             SourceView ? <SourceView initial={sourceText.current} onLeave={toWysiwyg} /> : <p class="muted pad">載入中…</p>
           )}
         </section>
+        <Splitter label="主文與對照分隔線" onDrag={dragSide} onReset={() => (sideWidth.value = 0)} />
         <aside class="pane pane-side">
           <nav class="tabs" role="tablist">
             <button role="tab" aria-selected={sideTab.value === 'compare'} onClick={() => (sideTab.value = 'compare')}>
               原典對照
+            </button>
+            <button role="tab" aria-selected={sideTab.value === 'annotate'} onClick={() => (sideTab.value = 'annotate')}>
+              標註
             </button>
             <button role="tab" aria-selected={sideTab.value === 'issues'} onClick={() => (sideTab.value = 'issues')}>
               問題 {diagnostics.value.length > 0 && <span class={`badge ${errors ? 'error' : ''}`}>{diagnostics.value.length}</span>}
@@ -122,6 +185,8 @@ export function Workspace() {
             <p class="muted pad">原始文字模式下暫停預覽；切回「所見即所得」後更新。</p>
           ) : sideTab.value === 'compare' ? (
             <ComparePanel />
+          ) : sideTab.value === 'annotate' ? (
+            <AnnotationPanel />
           ) : sideTab.value === 'issues' ? (
             <IssuesPanel />
           ) : (

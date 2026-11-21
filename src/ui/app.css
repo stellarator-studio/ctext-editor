@@ -120,12 +120,16 @@ button[aria-pressed='true'] { background: var(--hover); border-color: var(--acce
 .seg button:first-child { border-radius: 5px 0 0 5px; }
 .seg button:last-child { border-radius: 0 5px 5px 0; margin-left: -1px; }
 
-.main-grid { flex: 1; min-height: 0; display: grid; grid-template-columns: 150px minmax(0, 1.1fr) minmax(0, 1fr); }
-.pane { min-height: 0; overflow: hidden; display: flex; flex-direction: column; border-right: 1px solid var(--border); }
+.main-grid { flex: 1; min-height: 0; display: grid; }
+.splitter { cursor: col-resize; background: var(--border); position: relative; touch-action: none; }
+.splitter::after { content: ''; position: absolute; inset: 0 -4px; } /* wider grab area */
+.splitter:hover, .splitter:focus-visible, .splitter.dragging { background: var(--accent); outline: none; }
+.pane { min-height: 0; min-width: 0; overflow: hidden; display: flex; flex-direction: column; }
 .pane-side { border-right: none; background: var(--panel); }
 @media (max-width: 960px) {
-  .main-grid { grid-template-columns: 1fr; grid-template-rows: 150px 70vh minmax(70vh, auto); overflow: auto; }
-  .pane { border-right: none; border-bottom: 1px solid var(--border); }
+  .main-grid { grid-template-columns: 1fr !important; grid-template-rows: 150px 70vh minmax(70vh, auto); overflow: auto; }
+  .splitter { display: none; }
+  .pane { border-bottom: 1px solid var(--border); }
 }
 
 /* page list */
@@ -239,7 +243,7 @@ button[aria-pressed='true'] { background: var(--hover); border-color: var(--acce
 .ftable th, .ftable td { text-align: left; padding: 4px 6px; border-bottom: 1px solid var(--border); vertical-align: top; }
 .issues { overflow: auto; }
 .issue-list { list-style: none; padding: 0; margin: 0; }
-.issue-list li { border-bottom: 1px solid var(--border); }
+.issue-list li { border-bottom: 1px solid var(--border); display: flex; align-items: center; gap: 4px; justify-content: space-between; }
 .issue-list .sev-error { color: var(--err); }
 
 /* export dialog */
@@ -255,3 +259,24 @@ dialog.export::backdrop { background: rgb(0 0 0 / 0.35); }
 .hunks .ctx { color: var(--muted); }
 .hunks del { background: var(--del); text-decoration: line-through; }
 .hunks ins { background: var(--ins); text-decoration: none; }
+
+/* annotation */
+.annotate { overflow: auto; }
+.cand-group { border: 1px solid var(--border); border-radius: 6px; padding: 4px 8px; margin: 8px 0; }
+.cand-list { list-style: none; margin: 0; padding: 0; }
+.cand-list li { display: flex; align-items: center; gap: 4px; border-top: 1px dashed var(--border); }
+.cand-list li.rejected { opacity: 0.55; }
+.kwic { flex: 1; font: 15px/1.7 var(--serif); }
+.kwic .ctx { color: var(--muted); }
+.kwic mark { background: var(--ent-place); color: inherit; padding: 0 1px; }
+button.ok { color: var(--ok); }
+.entry-form { border: 1px solid var(--border); border-radius: 6px; padding: 6px 8px; margin: 6px 0; background: var(--bg); }
+.dict-table td { padding: 3px 6px; }
+.pm-host.break-mode .ProseMirror { cursor: crosshair; }
+.imgscroll.grab { cursor: grab; }
+.imgscroll.grabbing { cursor: grabbing; }
+.imgscroll img { user-select: none; -webkit-user-drag: none; }
+.plain-opts { border: 1px dashed var(--border); border-radius: 6px; padding: 6px 10px; margin: 6px 0; }
+.toolbar-wrap { position: relative; }
+/* fixed: escapes the inspector's overflow clipping */
+.popover { position: fixed; z-index: 20; top: 96px; left: 50%; transform: translateX(-50%); width: min(600px, calc(100vw - 32px)); background: var(--panel); border: 1px solid var(--border); border-radius: 8px; box-shadow: 0 6px 24px rgb(0 0 0 / 0.18); padding: 4px 8px; white-space: normal; }
