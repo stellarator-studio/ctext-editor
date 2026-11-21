@@ -9,7 +9,7 @@
 import type { Node as PMNode } from 'prosemirror-model';
 
 export const SEP = '\u0000';
-const TRANSPARENT = new Set(['scanBreak', 'scanSkip', 'pageStart', 'pageEnd', 'pageBoundary', 'seq']);
+export const TRANSPARENT: ReadonlySet<string> = new Set(['scanBreak', 'scanSkip', 'pageStart', 'pageEnd', 'pageBoundary', 'seq']);
 
 export interface Projection {
   text: string;
@@ -17,7 +17,8 @@ export interface Projection {
   pos: Int32Array;
 }
 
-export function project(doc: PMNode): Projection {
+/** `transparent`: inline atom types that do not interrupt the text (default: layout markers). */
+export function project(doc: PMNode, transparent: ReadonlySet<string> = TRANSPARENT): Projection {
   let text = '';
   const pos: number[] = [];
   const sep = () => {
@@ -34,7 +35,7 @@ export function project(doc: PMNode): Projection {
     if (node.isText) {
       text += node.text!;
       for (let i = 0; i < node.text!.length; i++) pos.push(p + i);
-    } else if (!TRANSPARENT.has(node.type.name)) sep();
+    } else if (!transparent.has(node.type.name)) sep();
     return false;
   });
   return { text, pos: Int32Array.from(pos) };

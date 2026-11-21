@@ -115,7 +115,7 @@ export function findCandidates(doc: PMNode, entries: DictEntry[]): Candidate[] {
   const patterns: string[] = [];
   const owner: number[] = [];
   entries.forEach((e, i) => {
-    for (const t of new Set([e.surface, ...e.variants].map((s) => s.trim()).filter(Boolean))) {
+    for (const t of termsOf(e)) {
       patterns.push(t);
       owner.push(i);
     }
@@ -148,7 +148,73 @@ export function findCandidates(doc: PMNode, entries: DictEntry[]): Candidate[] {
 /** Candidates whose ranges overlap. */
 export const overlaps = (a: { start: number; end: number }, b: { start: number; end: number }) => a.start < b.end && b.start < a.end;
 
-/** Existing <entity> spans in the document, for building a dictionary. */
+/** All search strings of an entry: the main term first, then the other spellings. */
+export const termsOf = (e: Pick<DictEntry, 'surface' | 'variants'>) => [...new Set([e.surface, ...e.variants].map((s) => s.trim()).filter(Boolean))];
+
+/** Entries with the same key describe the same cText entity (same id, type and attributes). */
+export function entityKey(e: Pick<DictEntry, 'entityid' | 'type' | 'extra'>): string {
+  const extra = Object.keys(e.extra ?? {})
+    .sort()
+    .map((k) => `${k}=${e.extra[k]}`)
+    .join('&');
+  return `${e.entityid.trim()}|${e.type.trim()}|${extra}`;
+}
+
+/** Entry with the given terms (first = main term). */
+export const withTerms = <T extends DictEntry | Omit<DictEntry, 'id' | 'source'>>(e: T, terms: string[]): T => {
+  const [surface = e.surface, ...variants] = [...new Set(terms.map((t) => t.trim()).filter(Boolean))];
+  return { ...e, surface, variants };
+};
+
+/**
+ * Merge incoming entries into a dictionary, one entry per entity: terms of an
+ * incoming entry for an entity already present are added to that entry.
+ * Returns the entries to write (changed existing ones and new ones) and the
+ * ids of existing entries that were folded into another one.
+ */
+export function mergeEntries(
+  existing: DictEntry[],
+  incoming: Omit<DictEntry, 'id' | 'source'>[],
+  make: (e: Omit<DictEntry, 'id' | 'source'>) => DictEntry,
+): { put: DictEntry[]; removed: string[]; added: number; termsAdded: number } {
+  const byKey = new Map<string, DictEntry>();
+  const removed: string[] = [];
+  const changed = new Set<string>();
+  // existing duplicates (same entity in several entries) are folded first
+  for (const e of existing) {
+    const k = entityKey(e);
+    const prev = byKey.get(k);
+    if (!prev) byKey.set(k, e);
+    else {
+      byKey.set(k, { ...withTerms(prev, [...termsOf(prev), ...termsOf(e)]), note: [prev.note, e.note].filter(Boolean).join('；') || undefined });
+      removed.push(e.id);
+      changed.add(k);
+    }
+  }
+  let added = 0;
+  let termsAdded = 0;
+  for (const e of incoming) {
+    const k = entityKey(e);
+    const prev = byKey.get(k);
+    if (!prev) {
+      byKey.set(k, make(withTerms(e, termsOf(e))));
+      changed.add(k);
+      added++;
+      continue;
+    }
+    const have = new Set(termsOf(prev));
+    const extra = termsOf(e).filter((t) => !have.has(t));
+    if (!extra.length) continue;
+    byKey.set(k, withTerms(prev, [...have, ...extra]));
+    changed.add(k);
+    termsAdded += extra.length;
+  }
+  const put = [...changed].map((k) => byKey.get(k)!);
+  for (const p of put) if (p.note === undefined) delete p.note;
+  return { put, removed, added, termsAdded };
+}
+
+/** Existing <entity> spans in the document, one entry per entity with all its spellings. */
 export function harvestEntities(doc: PMNode): Omit<DictEntry, 'id' | 'source'>[] {
   const spans = new Map<number, { text: string; entityid: string; type: string; extra: Record<string, string> }>();
   doc.descendants((n) => {
@@ -163,8 +229,11 @@ export function harvestEntities(doc: PMNode): Omit<DictEntry, 'id' | 'source'>[]
   });
   const seen = new Map<string, Omit<DictEntry, 'id' | 'source'>>();
   for (const s of spans.values()) {
-    const key = `${s.text}|${s.entityid}|${s.type}|${JSON.stringify(s.extra)}`;
-    if (!seen.has(key) && s.text.trim()) seen.set(key, { surface: s.text, entityid: s.entityid, type: s.type, extra: { ...s.extra }, variants: [] });
+    if (!s.text.trim()) continue;
+    const k = entityKey(s);
+    const prev = seen.get(k);
+    if (prev) seen.set(k, withTerms(prev, [...termsOf(prev), s.text]));
+    else seen.set(k, { surface: s.text.trim(), entityid: s.entityid, type: s.type, extra: { ...s.extra }, variants: [] });
   }
   return [...seen.values()];
 }

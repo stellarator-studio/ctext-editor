@@ -22,10 +22,11 @@ import { pasteGuard } from '../editor/paste';
 import { pageGuard } from '../editor/pageGuard';
 import { deleteAdjacentAtom } from '../editor/atomCommands';
 import { splitPage } from '../editor/pageCommands';
-import { insertScanBreak } from '../editor/commands';
 import { listDictionary, listMappings, saveProject } from '../store/projects';
 import type { DictEntry } from '../core/annotate';
 import { clickBreak } from '../editor/clickBreak';
+import { searchHighlight } from '../editor/search';
+import { clearFormat, insertScanBreak, setBlockLevel } from '../editor/commands';
 import type { FileMapping, Project } from '../store/db';
 
 // ---------------------------------------------------------------- signals
@@ -50,6 +51,19 @@ export const mappings = signal<Map<string, FileMapping>>(new Map());
 /** Local scan images chosen from a folder: file id → (image number → object URL). Not persisted. */
 export const localImages = signal<Map<string, Map<number, string>>>(new Map());
 export const exportOpen = signal(false);
+/** find / replace bar: null = closed */
+export const findBar = signal<null | { replace: boolean; seed?: string }>(null);
+
+/** Raw-text mode hooks for the find bar, registered by the source view while it is active. */
+export interface SourceSearch {
+  text(): string;
+  select(from: number, to: number): void;
+  highlight(ranges: { from: number; to: number }[], current: number): void;
+  replace(changes: { from: number; to: number; insert: string }[]): void;
+}
+export const sourceSearch = signal<SourceSearch | null>(null);
+/** Bumped on every raw-text change. */
+export const sourceTick = signal(0);
 
 // ---------------------------------------------------------------- editor
 
@@ -71,7 +85,14 @@ function plugins() {
       Backspace: chainCommands(stepOverSeq(-1), deleteAdjacentAtom(-1)),
       Delete: chainCommands(stepOverSeq(1), deleteAdjacentAtom(1)),
     }),
+    keymap({
+      'Mod-Alt-0': setBlockLevel(0),
+      'Mod-Alt-1': setBlockLevel(1),
+      'Mod-Alt-2': setBlockLevel(2),
+      'Mod-\\': clearFormat,
+    }),
     keymap(baseKeymap),
+    searchHighlight(),
     dropCursor({ color: '#d9822b', width: 3 }),
     clickBreak(() => breakMode.value),
   ];
@@ -124,7 +145,7 @@ export function unmountEditor() {
 }
 
 /** Move the editor cursor to `pos` and scroll it into view. */
-export function jumpTo(pos: number, select: 'cursor' | 'node' = 'cursor') {
+export function jumpTo(pos: number, select: 'cursor' | 'node' = 'cursor', focus = true) {
   if (!view) return;
   const doc = view.state.doc;
   const p = Math.max(0, Math.min(pos, doc.content.size));
@@ -135,7 +156,7 @@ export function jumpTo(pos: number, select: 'cursor' | 'node' = 'cursor') {
     sel = TextSelection.near(doc.resolve(p));
   }
   view.dispatch(view.state.tr.setSelection(sel).scrollIntoView());
-  view.focus();
+  if (focus) view.focus();
 }
 
 export function currentText(): string {
@@ -204,10 +225,13 @@ function stored(key: string, fallback: number): number {
 }
 export const pagesWidth = signal(stored('ct.pagesWidth', 150));
 export const sideWidth = signal(stored('ct.sideWidth', 0)); // 0 = default (fraction)
+/** width of the vertical text next to the scan in 原典對照; 0 = fit the page */
+export const compareTextWidth = signal(stored('ct.compareTextWidth', 0));
 export function persistLayout() {
   try {
     localStorage.setItem('ct.pagesWidth', String(pagesWidth.value));
     localStorage.setItem('ct.sideWidth', String(sideWidth.value));
+    localStorage.setItem('ct.compareTextWidth', String(compareTextWidth.value));
   } catch {
     /* storage unavailable: layout just isn't remembered */
   }

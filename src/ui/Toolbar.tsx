@@ -2,10 +2,18 @@ import { useEffect, useState } from 'preact/hooks';
 import { NodeSelection, type Command } from 'prosemirror-state';
 import { undo, redo } from 'prosemirror-history';
 import type { Node as PMNode } from 'prosemirror-model';
-import { breakMode, editorTick, getView, sideTab, showSeq } from '../app/state';
-import { EntryForm } from './AnnotationPanel';
+import { breakMode, editorTick, findBar, getView, pages, sideTab, showSeq } from '../app/state';
+import { pageIndexAt } from '../core/pageIndex';
+import { Menu } from './Menu';
+import { selectionSeed } from './FindBar';
+import { EntryForm, entryForEntity, selectedText } from './AnnotationPanel';
+import { termsOf, withTerms, type DictEntry } from '../core/annotate';
 import {
   applyEntity,
+  blockLevel,
+  clearFormat,
+  mergeWithPrevious,
+  setBlockLevel,
   entityAt,
   insertScanBreak,
   insertScanSkip,
@@ -24,29 +32,56 @@ function run(cmd: Command) {
   v.focus();
 }
 
-const SPANS: [SpanMark, string, string][] = [
-  ['note', '夾注', '{{ }} 底本中的註釋，小字'],
+const OTHER_SPANS: [SpanMark, string, string][] = [
   ['big', '大字', '{ } 註釋本中的正文'],
   ['margin', '邊注', '{{{ }}} 正文以外的註釋'],
   ['inverted', '反白', '【 】'],
   ['circled', '畫圈', '〖 〗'],
 ];
 
+const LEVELS = [
+  ['0', '內文'],
+  ['1', '標題 *'],
+  ['2', '標題 **'],
+] as const;
+
 export function Toolbar() {
   void editorTick.value; // re-render on editor changes
   const v = getView();
   const hasSel = !!v && !v.state.selection.empty;
+  const level = v ? blockLevel(v.state) : 0;
   return (
     <div class="toolbar-wrap">
       <div class="toolbar" role="toolbar" aria-label="編輯工具">
         <button onClick={() => run(undo)} title="復原 (Ctrl+Z)">↶</button>
         <button onClick={() => run(redo)} title="重做 (Ctrl+Y)">↷</button>
         <span class="sep" />
-        {SPANS.map(([m, label, title]) => (
-          <button key={m} disabled={!hasSel} onClick={() => run(toggleSpanMark(m))} title={`${title}（選取文字後套用／取消）`}>
-            {label}
-          </button>
-        ))}
+        <select
+          id="blockLevel"
+          aria-label="段落樣式"
+          title="設定標題：行首 * / **（Ctrl+Alt+1、2；內文 Ctrl+Alt+0）。選取段落中的一段文字時，會把它獨立成一段。"
+          value={String(level)}
+          onChange={(e) => run(setBlockLevel(Number((e.target as HTMLSelectElement).value)))}
+        >
+          {LEVELS.map(([v, label]) => (
+            <option key={v} value={v}>
+              {label}
+            </option>
+          ))}
+        </select>
+        <button disabled={!hasSel} onClick={() => run(toggleSpanMark('note'))} title="{{ }} 夾注：底本中的註釋，小字（選取文字後套用／取消）">
+          夾注
+        </button>
+        <button disabled={!hasSel} onClick={() => run(clearFormat)} title="清除選取範圍的夾注、大字、邊注、反白、畫圈，變回一般文字（Ctrl+\）。entity 標註保留。">
+          清除格式
+        </button>
+        <Menu label="其他標記" title="大字、邊注、反白、畫圈">
+          {OTHER_SPANS.map(([m, label, title]) => (
+            <button key={m} disabled={!hasSel} onClick={() => run(toggleSpanMark(m))} title={`${title}（選取文字後套用／取消）`}>
+              {label} <span class="muted small">{title.split(' ')[0]}</span>
+            </button>
+          ))}
+        </Menu>
         <span class="sep" />
         <button onClick={() => run(insertScanBreak)} title="插入換行 scanbreak (Shift+Enter)">⏎ 換行</button>
         <button
@@ -58,7 +93,6 @@ export function Toolbar() {
         >
           ␣ 空格
         </button>
-        <button onClick={() => run(splitPage)} title="在游標處分頁 (Ctrl+Enter)">✂ 分頁</button>
         <button
           aria-pressed={breakMode.value}
           onClick={() => {
@@ -69,7 +103,18 @@ export function Toolbar() {
         >
           ✎ 點擊斷行
         </button>
+        <Menu label="頁面" title="分頁、合併頁面（頁碼調整在「原典對照」的「頁碼」選單）">
+          <button onClick={() => run(splitPage)} title="插入 scanend + scanbegin，新頁頁碼＝本頁＋1">
+            ✂ 在游標處分頁 <span class="muted small">Ctrl+Enter</span>
+          </button>
+          <button onClick={() => run(mergeCurrentPage)} title="刪除本頁開頭的頁界">
+            本頁併入上一頁
+          </button>
+        </Menu>
         <span class="sep" />
+        <button onClick={() => (findBar.value = { replace: false, seed: selectionSeed() })} title="搜尋與取代 (Ctrl+F / Ctrl+H)">
+          搜尋
+        </button>
         <label class="check" title="顯示 seq 句子錨點（翻譯對齊用，可拖曳、不可刪除）">
           <input type="checkbox" checked={showSeq.value} onChange={(e) => (showSeq.value = (e.target as HTMLInputElement).checked)} /> seq
         </label>
@@ -78,6 +123,12 @@ export function Toolbar() {
     </div>
   );
 }
+
+/** Merge the page under the cursor into the previous one. */
+const mergeCurrentPage: Command = (state, dispatch) => {
+  const ps = pages.value;
+  return mergeWithPrevious(ps, pageIndexAt(ps, state.selection.from))(state, dispatch);
+};
 
 // ------------------------------------------------------------------ inspector
 
@@ -156,6 +207,12 @@ const formatExtra = (e: Record<string, string>) =>
     .map(([k, v]) => `${k}=${v}`)
     .join(' ');
 
+/** Form values for adding `term` to the dictionary: the entity's existing entry gets the term added. */
+function dictInitial(term: string, e: Pick<DictEntry, 'entityid' | 'type' | 'extra'>): Partial<DictEntry> {
+  const existing = entryForEntity(e);
+  return existing ? withTerms(existing, [...termsOf(existing), term]) : { ...e, surface: term, variants: [] };
+}
+
 function EntityInspector() {
   void editorTick.value; // signals skip re-render on equal props; subscribe directly
   const v = getView()!;
@@ -203,9 +260,7 @@ function EntityInspector() {
       </button>
       {adding && (
         <div class="popover">
-          <EntryForm
-            initial={{ surface: current ? v.state.doc.textBetween(current.from, current.to, '', '') : v.state.doc.textBetween(v.state.selection.from, v.state.selection.to, '', ''), entityid: id, type, extra: parseExtra(extra) }}
-            onDone={() => {
+          <EntryForm initial={dictInitial(current ? v.state.doc.textBetween(current.from, current.to, '', '') : selectedText(), { entityid: id.trim(), type: type.trim(), extra: parseExtra(extra) })} onDone={() => {
               setAdding(false);
               sideTab.value = 'annotate';
             }}

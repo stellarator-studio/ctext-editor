@@ -125,7 +125,8 @@ test('set the page number from here', async ({ page }) => {
   await create(page);
   await page.locator('.pagelist .pagelink').first().click();
   page.once('dialog', (d) => d.accept('10'));
-  await page.click('.page-actions button:has-text("設定…")');
+  await page.click('.page-actions .menu summary:has-text("頁碼")');
+  await page.click('.menu-list button:has-text("設定本頁頁碼…")');
   const out = await exportText(page);
   expect(out).toContain('<scanbegin file="1" page="10" />');
   expect(out).toContain('<scanend file="1" page="10" /><scanbegin file="1" page="11" />');

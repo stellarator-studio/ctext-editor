@@ -181,7 +181,8 @@ test('split (Ctrl+Enter) and merge (Backspace) keep scanend numbers consistent',
   // renumber following pages +1 from the 3rd page
   await page.locator('.pagelist .pagelink').nth(2).click();
   await page.click('.tabs button:has-text("原典對照")');
-  await page.click('.page-actions button:has-text("+1")');
+  await page.click('.page-actions .menu summary:has-text("頁碼")');
+  await page.click('.menu-list button:has-text("本頁起頁碼 +1")');
   out = await exportText(page);
   expect(out).toContain('壬<scanend file="1" page="3" /><scanbegin file="1" page="4" />子');
   expect(out).toContain('巳<scanend file="1" page="4" />');

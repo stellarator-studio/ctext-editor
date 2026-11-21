@@ -6,10 +6,10 @@
  *   edit, import/export.
  */
 import { useMemo, useState } from 'preact/hooks';
-import { findCandidates, harvestEntities, type Candidate, type DictEntry } from '../core/annotate';
+import { entityKey, findCandidates, harvestEntities, termsOf, withTerms, type Candidate, type DictEntry } from '../core/annotate';
 import { dictionary, editorTick, getView, loadDictionary, project, selectRange, updateProject } from '../app/state';
 import { acceptCandidates } from '../editor/annotateCommands';
-import { deleteEntry, dictionaryFromFile, dictionaryToFile, download, newEntryId, saveEntry } from '../store/projects';
+import { deleteEntry, dictionaryFromFile, dictionaryToFile, download, mergeIntoDictionary, saveEntry } from '../store/projects';
 
 const TYPES = ['place', 'person', 'era', 'date', 'work', 'office'];
 
@@ -22,11 +22,21 @@ const formatExtra = (e: Record<string, string>) =>
   Object.entries(e)
     .map(([k, v]) => `${k}=${v}`)
     .join(' ');
-const splitVariants = (s: string) =>
-  s
-    .split(/[\s,，、]+/)
-    .map((x) => x.trim())
-    .filter(Boolean);
+const splitTerms = (s: string) => [
+  ...new Set(
+    s
+      .split(/[\s,，、;；]+/)
+      .map((x) => x.trim())
+      .filter(Boolean),
+  ),
+];
+
+/** The dictionary entry for an entity (same id, type and attributes), if any. */
+export function entryForEntity(e: Pick<DictEntry, 'entityid' | 'type' | 'extra'>): DictEntry | undefined {
+  const k = entityKey(e);
+  for (const x of dictionary.value.values()) if (entityKey(x) === k) return x;
+  return undefined;
+}
 
 /** Text currently selected in the editor (plain, without markers). */
 export function selectedText(): string {
@@ -39,37 +49,40 @@ export function selectedText(): string {
 // ------------------------------------------------------------------ entry form
 
 export function EntryForm({ initial, onDone }: { initial?: Partial<DictEntry>; onDone: () => void }) {
-  const [surface, setSurface] = useState(initial?.surface ?? '');
+  const [terms, setTerms] = useState(initial?.surface !== undefined ? termsOf({ surface: initial.surface, variants: initial.variants ?? [] }).join('、') : '');
   const [entityid, setEntityid] = useState(initial?.entityid ?? '');
   const [type, setType] = useState(initial?.type ?? 'place');
-  const [variants, setVariants] = useState((initial?.variants ?? []).join(' '));
   const [extra, setExtra] = useState(formatExtra(initial?.extra ?? {}));
   const [note, setNote] = useState(initial?.note ?? '');
+  const list = splitTerms(terms);
   const save = async () => {
-    const e: DictEntry = {
-      id: initial?.id ?? newEntryId(),
-      surface: surface.trim(),
-      entityid: entityid.trim(),
-      type: type.trim(),
-      extra: parseExtra(extra),
-      variants: splitVariants(variants).filter((x) => x !== surface.trim()),
-      source: initial?.source ?? 'manual',
-      ...(note.trim() ? { note: note.trim() } : {}),
-    };
-    await saveEntry(e);
+    const base = { entityid: entityid.trim(), type: type.trim(), extra: parseExtra(extra), ...(note.trim() ? { note: note.trim() } : {}) };
+    if (initial?.id) {
+      await saveEntry(withTerms({ ...base, id: initial.id, source: initial.source ?? 'manual', surface: '', variants: [] }, list));
+      await mergeIntoDictionary([], 'manual'); // the edit may have made it the same entity as another entry
+    } else {
+      // an entry for this entity may already exist: the terms are added to it
+      await mergeIntoDictionary([withTerms({ ...base, surface: '', variants: [] }, list)], 'manual');
+    }
     await loadDictionary();
     onDone();
+  };
+  const addSelection = () => {
+    const t = selectedText().trim();
+    if (t && !list.includes(t)) setTerms([...list, t].join('、'));
   };
   return (
     <div class="entry-form">
       <div class="row tight">
-        <label class="ifield">
-          <span>詞</span>
-          <input data-field="surface" value={surface} onInput={(e) => setSurface((e.target as HTMLInputElement).value)} size={8} />
+        <label class="ifield grow" title="同一個 entity 的各種寫法，第一個為主要詞彙；以頓號、逗號或空白分隔">
+          <span>詞彙</span>
+          <input class="grow" data-field="surface" value={terms} onInput={(e) => setTerms((e.target as HTMLInputElement).value)} placeholder="英吉利、英國、英" />
         </label>
-        <button class="small" onClick={() => setSurface(selectedText() || surface)} title="使用編輯器中選取的文字">
-          ← 選取
+        <button class="small" onClick={addSelection} title="把編輯器中選取的文字加入詞彙">
+          ＋選取
         </button>
+      </div>
+      <div class="row tight">
         <label class="ifield">
           <span>entityid</span>
           <input data-field="dict-entityid" value={entityid} onInput={(e) => setEntityid((e.target as HTMLInputElement).value)} size={8} />
@@ -83,12 +96,6 @@ export function EntryForm({ initial, onDone }: { initial?: Partial<DictEntry>; o
             ))}
           </datalist>
         </label>
-      </div>
-      <div class="row tight">
-        <label class="ifield grow">
-          <span>異寫</span>
-          <input value={variants} onInput={(e) => setVariants((e.target as HTMLInputElement).value)} placeholder="以空白或頓號分隔" />
-        </label>
         <label class="ifield">
           <span>其他屬性</span>
           <input value={extra} onInput={(e) => setExtra((e.target as HTMLInputElement).value)} placeholder="year=28" size={9} />
@@ -99,7 +106,7 @@ export function EntryForm({ initial, onDone }: { initial?: Partial<DictEntry>; o
           <span>備註</span>
           <input value={note} onInput={(e) => setNote((e.target as HTMLInputElement).value)} />
         </label>
-        <button class="primary" onClick={save} disabled={!surface.trim() || !entityid.trim() || !type.trim()}>
+        <button class="primary" onClick={save} disabled={!list.length || !entityid.trim() || !type.trim()}>
           {initial?.id ? '儲存' : '加入字典'}
         </button>
         <button onClick={onDone}>取消</button>
@@ -155,7 +162,7 @@ function Candidates() {
           <section key={id} class="cand-group">
             <header class="row spread tight">
               <span>
-                <strong>{e.surface}</strong>{' '}
+                <strong>{termsOf(e).join('、')}</strong>{' '}
                 <span class="muted small">
                   {e.type} #{e.entityid} {formatExtra(e.extra)}
                 </span>{' '}
@@ -217,16 +224,15 @@ function Dictionary() {
   const harvest = async () => {
     const doc = getView()?.state.doc;
     if (!doc) return;
-    const existing = new Set(entries.map((e) => `${e.surface}|${e.entityid}|${e.type}|${JSON.stringify(e.extra)}`));
-    let added = 0;
-    for (const h of harvestEntities(doc)) {
-      if (skipDates && h.type === 'date') continue;
-      if (existing.has(`${h.surface}|${h.entityid}|${h.type}|${JSON.stringify(h.extra)}`)) continue;
-      await saveEntry({ ...h, id: newEntryId(), source: 'harvest' });
-      added++;
-    }
+    const found = harvestEntities(doc).filter((h) => !skipDates || h.type !== 'date');
+    const r = await mergeIntoDictionary(found, 'harvest');
     await loadDictionary();
-    setMsg(`從文本收集了 ${added} 個新詞條。`);
+    setMsg(`從文本收集：新增 ${r.added} 個詞條${r.termsAdded ? `，${r.termsAdded} 個詞彙併入既有詞條` : ''}。`);
+  };
+  const fold = async () => {
+    const r = await mergeIntoDictionary([], 'manual');
+    await loadDictionary();
+    setMsg(r.removed.length ? `合併了 ${r.removed.length} 個重複詞條。` : '沒有重複的 entity。');
   };
 
   const shown = entries.filter((e) => !filter || e.surface.includes(filter) || e.variants.some((x) => x.includes(filter)) || e.entityid.includes(filter));
@@ -242,6 +248,9 @@ function Dictionary() {
         <label class="check small" title="date 類常帶 year 等屬性，同字不同值，預設不收集">
           <input type="checkbox" checked={skipDates} onChange={(e) => setSkipDates((e.target as HTMLInputElement).checked)} /> 略過 date
         </label>
+        <button onClick={fold} title="同一個 entity（entityid、type、屬性相同）分在多個詞條時，合併成一筆">
+          合併同 entity
+        </button>
       </div>
       {adding && <EntryForm initial={{ surface: selectedText() }} onDone={() => setAdding(false)} />}
       {msg && <p class="muted small">{msg}</p>}
@@ -262,7 +271,7 @@ function Dictionary() {
               <tr key={e.id}>
                 <td>
                   <strong>{e.surface}</strong>
-                  {e.variants.length > 0 && <span class="muted small">（{e.variants.join('、')}）</span>}
+                  {e.variants.length > 0 && <span class="small">、{e.variants.join('、')}</span>}
                 </td>
                 <td class="small">
                   {e.type} #{e.entityid}
@@ -299,10 +308,9 @@ function Dictionary() {
               const f = (ev.target as HTMLInputElement).files?.[0];
               if (!f) return;
               try {
-                const list = dictionaryFromFile(await f.text());
-                for (const e of list) await saveEntry(e);
+                const r = await mergeIntoDictionary(dictionaryFromFile(await f.text()), 'import');
                 await loadDictionary();
-                setMsg(`匯入 ${list.length} 筆。`);
+                setMsg(`匯入：新增 ${r.added} 個詞條${r.termsAdded ? `，${r.termsAdded} 個詞彙併入既有詞條` : ''}。`);
               } catch (x) {
                 setMsg(String((x as Error).message));
               }

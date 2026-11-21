@@ -18,11 +18,11 @@ import {
   diagnostics,
   pagesWidth,
   sideWidth,
-  persistLayout,
   breakMode,
+  findBar,
 } from '../app/state';
 import { AnnotationPanel } from './AnnotationPanel';
-import { download, projectToFile } from '../store/projects';
+import { downloadProject } from '../store/projects';
 import { openProject } from './App';
 import { Toolbar } from './Toolbar';
 import { PageList } from './PageList';
@@ -30,6 +30,8 @@ import { ComparePanel } from './ComparePanel';
 import { IssuesPanel } from './IssuesPanel';
 import { FilesPanel } from './FilesPanel';
 import { ExportDialog } from './ExportDialog';
+import { FindBar, useFindShortcut } from './FindBar';
+import { Splitter } from './Splitter';
 
 const SAVE_LABEL = { saved: '已儲存', dirty: '未儲存…', saving: '儲存中…', error: '⚠ 儲存失敗' } as const;
 
@@ -48,52 +50,9 @@ function EditorPane() {
 
 type SourceViewT = typeof import('./SourceView').SourceView;
 
-/** Draggable column divider. Arrow keys move it, double-click resets. */
-function Splitter({ label, onDrag, onReset }: { label: string; onDrag: (dx: number) => void; onReset: () => void }) {
-  const down = (e: PointerEvent) => {
-    const el = e.currentTarget as HTMLElement;
-    el.setPointerCapture(e.pointerId);
-    el.classList.add('dragging');
-    let last = e.clientX;
-    const move = (ev: PointerEvent) => {
-      onDrag(ev.clientX - last);
-      last = ev.clientX;
-    };
-    const up = () => {
-      el.classList.remove('dragging');
-      el.removeEventListener('pointermove', move);
-      el.removeEventListener('pointerup', up);
-      persistLayout();
-    };
-    el.addEventListener('pointermove', move);
-    el.addEventListener('pointerup', up);
-    e.preventDefault();
-  };
-  return (
-    <div
-      class="splitter"
-      role="separator"
-      aria-orientation="vertical"
-      aria-label={label}
-      tabIndex={0}
-      title={`${label}（拖曳調整，雙擊還原）`}
-      onPointerDown={down}
-      onDblClick={() => {
-        onReset();
-        persistLayout();
-      }}
-      onKeyDown={(e) => {
-        if (e.key !== 'ArrowLeft' && e.key !== 'ArrowRight') return;
-        onDrag(e.key === 'ArrowLeft' ? -24 : 24);
-        persistLayout();
-        e.preventDefault();
-      }}
-    />
-  );
-}
-
 export function Workspace() {
   const p = project.value!;
+  useFindShortcut();
   const sourceText = useRef('');
   // CodeMirror is only needed for the raw-text mode: load it on first use.
   const [SourceView, setSourceView] = useState<SourceViewT | null>(null);
@@ -144,7 +103,7 @@ export function Workspace() {
             原始文字
           </button>
         </div>
-        <button onClick={() => download(projectToFile({ ...p }), `${p.title}.ctext-project.json`)}>匯出專案檔</button>
+        <button onClick={() => saveNow().then(() => downloadProject(project.value!))} title="文字、校對狀態、用到的圖片對照與字典">匯出專案檔</button>
         <button class="primary" id="exportBtn" onClick={() => saveNow().then(() => (exportOpen.value = true))}>
           匯出 cText…
         </button>
@@ -156,13 +115,14 @@ export function Workspace() {
         </aside>
         <Splitter label="頁面清單寬度" onDrag={dragPages} onReset={() => (pagesWidth.value = 150)} />
         <section class="pane pane-editor">
+          {mode.value === 'wysiwyg' && <Toolbar />}
+          {findBar.value && <FindBar key={mode.value} />}
           {mode.value === 'wysiwyg' ? (
-            <>
-              <Toolbar />
-              <EditorPane />
-            </>
+            <EditorPane />
+          ) : SourceView ? (
+            <SourceView initial={sourceText.current} onLeave={toWysiwyg} />
           ) : (
-            SourceView ? <SourceView initial={sourceText.current} onLeave={toWysiwyg} /> : <p class="muted pad">載入中…</p>
+            <p class="muted pad">載入中…</p>
           )}
         </section>
         <Splitter label="主文與對照分隔線" onDrag={dragSide} onReset={() => (sideWidth.value = 0)} />
