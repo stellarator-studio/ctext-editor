@@ -1,10 +1,11 @@
 import { useEffect, useState } from 'preact/hooks';
 import type { Project } from '../store/db';
 import { persistent } from '../store/db';
-import { deleteProject, download, guessTitle, listProjects, newProject, projectFromFile, projectToFile, saveProject } from '../store/projects';
+import { deleteProject, downloadProject, guessTitle, importProjectFile, listProjects, newProject, saveProject } from '../store/projects';
 import { toDoc } from '../core/toDoc';
 import { buildPageIndex } from '../core/pageIndex';
 import { openProject } from './App';
+import { loadDictionary, loadMappings } from '../app/state';
 import { hasScanTags, plainToCtext, type PlainOptions } from '../core/plainText';
 
 function summary(text: string) {
@@ -36,9 +37,17 @@ export function Home() {
     const f = (e.target as HTMLInputElement).files?.[0];
     if (!f) return;
     try {
-      const p = await saveProject(await projectFromFile(await f.text()));
+      const r = await importProjectFile(await f.text());
+      await Promise.all([loadMappings(), loadDictionary()]);
+      const parts = [
+        r.mappingsAdded ? `${r.mappingsAdded} 個圖片對照` : '',
+        r.entriesAdded ? `${r.entriesAdded} 個字典詞條` : '',
+        r.termsAdded ? `${r.termsAdded} 個詞彙併入既有詞條` : '',
+      ].filter(Boolean);
+      const kept = r.mappingsKept.length ? `\nfile ${r.mappingsKept.join('、')} 的圖片對照與這個瀏覽器中的不同，保留了原本的設定。` : '';
+      if (parts.length || kept) alert(`已匯入專案${parts.length ? `，並加入${parts.join('、')}` : ''}。${kept}`);
       await refresh();
-      openProject(p.id);
+      openProject(r.project.id);
     } catch (err) {
       setError(String((err as Error).message));
     }
@@ -119,7 +128,7 @@ export function Home() {
                   {summary(p.text)}・已校對 {Object.values(p.proofread).filter((s) => s.done).length} 頁・{new Date(p.updatedAt).toLocaleString()}
                 </span>
                 <span class="row tight">
-                  <button onClick={() => download(projectToFile(p), `${p.title}.ctext-project.json`)}>匯出</button>
+                  <button onClick={() => downloadProject(p)} title="專案檔包含文字、校對狀態、用到的圖片對照與字典">匯出</button>
                   <button
                     class="danger"
                     onClick={async () => {

@@ -1,5 +1,5 @@
 import { db, type FileMapping, type Project } from './db';
-import type { DictEntry } from '../core/annotate';
+import { mergeEntries, type DictEntry } from '../core/annotate';
 
 const now = () => new Date().toISOString();
 const newId = () => (crypto.randomUUID ? crypto.randomUUID() : `p${Date.now()}${Math.random().toString(36).slice(2)}`);
@@ -36,22 +36,67 @@ export async function deleteProject(id: string) {
 
 const PROJECT_FORMAT = 'ctext-editor-project';
 
-export function projectToFile(p: Project): Blob {
-  return new Blob([JSON.stringify({ format: PROJECT_FORMAT, version: 1, project: p }, null, 1)], { type: 'application/json' });
+/** Scan file ids used in a cText text. */
+export function fileIdsIn(text: string): Set<string> {
+  const ids = new Set<string>();
+  for (const m of text.matchAll(/<scan(?:begin|end|break|skip)\b[^>]*\bfile="([^"]*)"/g)) ids.add(m[1]);
+  return ids;
 }
 
-export async function projectFromFile(json: string): Promise<Project> {
+/**
+ * A project file also carries the image mappings of the file ids the text
+ * uses and the annotation dictionary, so opening it on another machine (or
+ * after clearing the browser) restores the whole working setup.
+ */
+export async function projectFile(p: Project): Promise<Blob> {
+  const ids = fileIdsIn(p.text);
+  const [maps, dict] = await Promise.all([listMappings(), listDictionary()]);
+  const data = { format: PROJECT_FORMAT, version: 2, project: p, mappings: maps.filter((m) => ids.has(m.fileId)), dictionary: dict };
+  return new Blob([JSON.stringify(data, null, 1)], { type: 'application/json' });
+}
+
+export async function downloadProject(p: Project) {
+  download(await projectFile(p), `${p.title}.ctext-project.json`);
+}
+
+export interface ImportResult {
+  project: Project;
+  mappingsAdded: number;
+  /** file ids whose mapping in the file differs from the one already in this browser (kept as is) */
+  mappingsKept: string[];
+  entriesAdded: number;
+  termsAdded: number;
+}
+
+/** Read a project file and store it, together with its image mappings and dictionary. */
+export async function importProjectFile(json: string): Promise<ImportResult> {
   const data = JSON.parse(json);
   if (data?.format !== PROJECT_FORMAT || typeof data.project?.text !== 'string') throw new Error('不是 cText Editor 專案檔');
   const p = data.project as Project;
   const exists = await getProject(p.id);
-  return {
+  const project = await saveProject({
     ...newProject(p.text, p.title),
     originalText: p.originalText ?? p.text,
     proofread: p.proofread ?? {},
     rejected: p.rejected ?? [],
     ...(exists ? { title: `${p.title}（匯入）` } : { id: p.id, createdAt: p.createdAt }),
-  };
+  });
+
+  let mappingsAdded = 0;
+  const mappingsKept: string[] = [];
+  const have = new Map((await listMappings()).map((m) => [m.fileId, m]));
+  for (const m of validMappings(data.mappings)) {
+    const cur = have.get(m.fileId);
+    if (!cur) {
+      await saveMapping(m);
+      mappingsAdded++;
+    } else if (cur.template !== m.template || (cur.offset ?? 0) !== (m.offset ?? 0)) mappingsKept.push(m.fileId);
+  }
+
+  const { put, removed, added, termsAdded } = mergeEntries(await listDictionary(), validEntries(data.dictionary), (e) => ({ ...e, id: newId(), source: 'import' }));
+  for (const e of put) await saveEntry(e);
+  for (const id of removed) await deleteEntry(id);
+  return { project, mappingsAdded, mappingsKept, entriesAdded: added, termsAdded };
 }
 
 // ---- file id → image mappings ----
@@ -73,7 +118,10 @@ export function mappingsToFile(ms: FileMapping[]): Blob {
 export function mappingsFromFile(json: string): FileMapping[] {
   const data = JSON.parse(json);
   if (data?.format !== MAPPING_FORMAT || !Array.isArray(data.mappings)) throw new Error('不是圖片對照表檔案');
-  return data.mappings.filter((m: FileMapping) => typeof m.fileId === 'string' && typeof m.template === 'string');
+  return validMappings(data.mappings);
+}
+function validMappings(ms: unknown): FileMapping[] {
+  return Array.isArray(ms) ? ms.filter((m: FileMapping) => typeof m?.fileId === 'string' && typeof m.template === 'string') : [];
 }
 
 export function download(blob: Blob, filename: string) {
@@ -106,7 +154,11 @@ export function dictionaryToFile(es: DictEntry[]): Blob {
 export function dictionaryFromFile(json: string): DictEntry[] {
   const data = JSON.parse(json);
   if (data?.format !== DICT_FORMAT || !Array.isArray(data.entries)) throw new Error('不是 annotation 字典檔');
-  return data.entries
+  return validEntries(data.entries);
+}
+function validEntries(es: unknown): DictEntry[] {
+  if (!Array.isArray(es)) return [];
+  return es
     .filter((e: DictEntry) => typeof e.surface === 'string' && typeof e.entityid === 'string')
     .map(
       (e: Partial<DictEntry>): DictEntry => ({
@@ -114,10 +166,18 @@ export function dictionaryFromFile(json: string): DictEntry[] {
         entityid: e.entityid!,
         type: e.type || 'place',
         extra: e.extra ?? {},
-        variants: e.variants ?? [],
+        variants: Array.isArray(e.variants) ? e.variants : [],
         ...(e.note ? { note: e.note } : {}),
         id: e.id || newId(),
         source: 'import',
       }),
     );
+}
+
+/** Add entries to the dictionary, one entry per entity (new spellings are merged into existing entries). */
+export async function mergeIntoDictionary(incoming: Omit<DictEntry, 'id' | 'source'>[], source: DictEntry['source']) {
+  const r = mergeEntries(await listDictionary(), incoming, (e) => ({ ...e, id: newId(), source }));
+  for (const e of r.put) await saveEntry(e);
+  for (const id of r.removed) await deleteEntry(id);
+  return r;
 }

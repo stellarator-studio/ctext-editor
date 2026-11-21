@@ -4,11 +4,76 @@
 import type { MarkType, Node as PMNode } from 'prosemirror-model';
 import type { Command, EditorState, Transaction } from 'prosemirror-state';
 import { freshIid } from '../core/ids';
-import { schema } from '../core/schema';
+import { MILESTONES, schema } from '../core/schema';
 import type { Page } from '../core/pageIndex';
 import { pageAt } from './pageCommands';
 
 export type SpanMark = 'big' | 'note' | 'margin' | 'inverted' | 'circled';
+const SPAN_MARKS: SpanMark[] = ['big', 'note', 'margin', 'inverted', 'circled'];
+
+/** Remove all span formatting ({{ }}, { }, {{{ }}}, 【】, 〖〗) from the selection. Entities are kept. */
+export const clearFormat: Command = (state, dispatch) => {
+  const { from, to, empty } = state.selection;
+  if (empty) return false;
+  const tr = state.tr;
+  for (const m of SPAN_MARKS) tr.removeMark(from, to, schema.marks[m]);
+  if (!tr.docChanged) return false;
+  dispatch?.(tr);
+  return true;
+};
+
+const isMilestone = (n: PMNode) => !n.isText && MILESTONES.has(n.type.name);
+/** Number of leading layout markers in a block (they stay before the '*' of a heading). */
+function leadingMilestones(block: PMNode): number {
+  let i = 0;
+  while (i < block.childCount && isMilestone(block.child(i))) i++;
+  return i;
+}
+/** True if the block content in [from, to) (positions inside it) has only layout markers. */
+function onlyMilestones(doc: PMNode, from: number, to: number): boolean {
+  let ok = true;
+  doc.nodesBetween(from, to, (n) => {
+    if (n.isInline && !isMilestone(n)) ok = false;
+    return !n.isInline;
+  });
+  return ok;
+}
+
+/** Current block level at the cursor: 0 = paragraph, 1 = '*', 2 = '**'. */
+export function blockLevel(state: EditorState): number {
+  const p = state.selection.$from.parent;
+  return p.type.name === 'heading' ? p.attrs.level : 0;
+}
+
+/**
+ * Make the selected blocks headings (`*` × level) or paragraphs (level 0).
+ * A selection inside one paragraph is first split off into its own block,
+ * unless only layout markers (page / column breaks) are left beside it.
+ */
+export function setBlockLevel(level: number): Command {
+  return (state, dispatch) => {
+    const tr = state.tr;
+    const { $from, $to, empty } = state.selection;
+    if (!empty && level > 0 && $from.sameParent($to) && $from.parent.isTextblock) {
+      if (!onlyMilestones(state.doc, $to.pos, $to.end())) tr.split($to.pos);
+      if (!onlyMilestones(state.doc, $from.start(), $from.pos)) tr.split($from.pos);
+    }
+    const from = tr.mapping.map(state.selection.from, 1);
+    const to = Math.max(from, tr.mapping.map(state.selection.to, -1));
+    tr.doc.nodesBetween(from, to, (node, pos) => {
+      if (!node.isTextblock) return true;
+      if (level === 0) {
+        if (node.type.name !== 'paragraph') tr.setNodeMarkup(pos, schema.nodes.paragraph);
+      } else if (node.type.name !== 'heading' || node.attrs.level !== level) {
+        tr.setNodeMarkup(pos, schema.nodes.heading, { level, prefix: leadingMilestones(node) });
+      }
+      return false;
+    });
+    if (!tr.docChanged) return false;
+    dispatch?.(tr.scrollIntoView());
+    return true;
+  };
+}
 
 function rangeHasMark(state: EditorState, type: MarkType): boolean {
   const { from, to } = state.selection;
@@ -145,6 +210,18 @@ export function shiftPageNumbers(pages: Page[], fromIdx: number, delta: number):
       const key = p.markerType === 'pageStart' ? 'page' : 'beginPage';
       setNodeAttrs(tr, p.markerPos, { [key]: String(n + delta) });
     }
+    if (!tr.docChanged) return false;
+    dispatch?.(tr);
+    return true;
+  };
+}
+
+/** Set the leading blank cells (y) of column `line` of a page: the y of its scanbreak, or of the page marker for the first column. */
+export function setLineY(page: Page, line: number, y: number): Command {
+  return (state, dispatch) => {
+    const pos = line === 0 ? page.markerPos : page.lines[line]?.breakPos;
+    if (pos == null || y < 0) return false;
+    const tr = setNodeAttrs(state.tr, pos, { y: y > 0 ? String(y) : null });
     if (!tr.docChanged) return false;
     dispatch?.(tr);
     return true;

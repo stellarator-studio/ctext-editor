@@ -141,7 +141,8 @@ describe.runIf(existsSync(resolve(SAMPLES, 'sea.txt')))('sea.txt', () => {
     const entries = harvestEntities(doc)
       .filter((e) => e.type === 'place')
       .map((e, i) => ({ ...e, id: String(i), source: 'harvest' as const }));
-    expect(entries.length).toBeGreaterThan(10);
+    expect(entries.length).toBeGreaterThan(5);
+    expect(entries.some((e) => e.variants.length > 0)).toBe(true); // several spellings per entity
     const cands = findCandidates(doc, entries);
     // the sample has untagged occurrences of some harvested place names
     expect(cands.length).toBeGreaterThan(0);
