@@ -1,0 +1,74 @@
+<!doctype html>
+<html lang="zh-Hant">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>cText Editor M0</title>
+</head>
+<body>
+  <header>
+    <h1>cText Editor <small>M0 spike</small></h1>
+    <nav><a href="./image-test.html">圖片載入測試 →</a></nav>
+  </header>
+
+  <section class="panel">
+    <h2>1. 貼上 cText 文字</h2>
+    <textarea id="input" rows="6" placeholder="從 cText 編輯框複製文字後貼在這裡"></textarea>
+    <div class="row">
+      <button id="load">載入到編輯器</button>
+      <span id="loadStatus" class="muted"></span>
+    </div>
+  </section>
+
+  <section class="panel">
+    <h2>2. 編輯</h2>
+    <div class="row toolbar">
+      <label><input type="checkbox" id="showSeq" checked /> 顯示 seq</label>
+      <button id="split" title="Ctrl/Cmd + Enter">在游標處分頁</button>
+      <button id="undo">復原</button>
+      <button id="redo">重做</button>
+      <span id="seqStatus" class="muted"></span>
+    </div>
+    <div id="editor"></div>
+    <p class="muted legend">
+      圖例：<span class="ct-atom ct-page">p.9 │ p.10</span> 頁界（可選取後刪除＝合頁）
+      <span class="ct-atom ct-break">⏎¹</span> scanbreak（上標＝y）
+      <span class="ct-atom ct-skip">␣3</span> scanskip
+      <span class="ct-atom ct-seq">10</span> seq（可拖曳，刪不掉）
+      <span class="ct-note">夾注</span>
+      <span class="ct-entity ct-entity-place">地名</span>
+    </p>
+  </section>
+
+  <section class="panel">
+    <h2>3. 匯出並比對</h2>
+    <div class="row">
+      <button id="export">匯出</button>
+      <button id="copy">複製匯出結果</button>
+      <span id="exportStatus"></span>
+    </div>
+    <pre id="diff" class="diff" hidden></pre>
+    <textarea id="output" rows="6" readonly></textarea>
+  </section>
+
+  <section class="panel">
+    <h2>手動測試清單</h2>
+    <ol class="checklist">
+      <li><label><input type="checkbox" /> 貼上 content.txt 與 sea.txt，不編輯直接匯出 → 顯示「逐字相同」</label></li>
+      <li><label><input type="checkbox" /> 以注音/倉頡/拼音輸入法在一般文字中輸入中文，選字正常、游標不跳</label></li>
+      <li><label><input type="checkbox" /> 在夾注、entity 內與 scanbreak 旁輸入中文</label></li>
+      <li><label><input type="checkbox" /> 選取一段含 seq 的文字後刪除 → 文字刪掉、seq 留在原處</label></li>
+      <li><label><input type="checkbox" /> 選取一段含 seq 的文字後直接用輸入法打字（取代選取）→ seq 保留、輸入法正常</label></li>
+      <li><label><input type="checkbox" /> 剪下（Ctrl+X）含 seq 的範圍 → seq 保留；貼回時不會多出重複的 seq</label></li>
+      <li><label><input type="checkbox" /> 拖曳一個 seq 到前後 seq 之間的位置 → 成功</label></li>
+      <li><label><input type="checkbox" /> 拖曳 seq 越過相鄰的 seq → 被拒絕（位置不變）</label></li>
+      <li><label><input type="checkbox" /> 在 seq 後按 Backspace → 游標跳過 seq，再按一次刪前一字</label></li>
+      <li><label><input type="checkbox" /> 在段落中 Ctrl+Enter 分頁；選取頁界後刪除合頁；匯出結果標籤正確</label></li>
+      <li><label><input type="checkbox" /> 復原 / 重做以上所有動作</label></li>
+      <li><label><input type="checkbox" /> 以上在 Chrome / Firefox / Safari（或 Edge）各測一次</label></li>
+    </ol>
+  </section>
+
+  <script type="module" src="/src/spike/editor.ts"></script>
+</body>
+</html>
