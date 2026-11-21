@@ -1,0 +1,112 @@
+:root {
+  --bg: #fbfaf7;
+  --fg: #222;
+  --muted: #777;
+  --panel: #fff;
+  --border: #ddd;
+  --atom-bg: #eef1f5;
+  --atom-fg: #556;
+  --page-bg: #fde8c8;
+  --page-fg: #8a4b00;
+  --seq-bg: #e3f0e3;
+  --seq-fg: #2c6e2c;
+  --note-fg: #8a5a2b;
+  --entity-place: #d9ecff;
+  --entity-person: #ffe0e6;
+  --entity-date: #efe3ff;
+  --entity-other: #e8f6e0;
+  --diff-bg: #fff6e0;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme='light']) {
+    --bg: #1b1c1e;
+    --fg: #ddd;
+    --muted: #999;
+    --panel: #242629;
+    --border: #3a3d42;
+    --atom-bg: #33373d;
+    --atom-fg: #aab;
+    --page-bg: #5a3a12;
+    --page-fg: #ffd9a0;
+    --seq-bg: #23402a;
+    --seq-fg: #9fd89f;
+    --note-fg: #d8a878;
+    --entity-place: #1f3a57;
+    --entity-person: #57243a;
+    --entity-date: #3b2a57;
+    --entity-other: #2b4321;
+    --diff-bg: #3d3420;
+  }
+}
+
+* { box-sizing: border-box; }
+body {
+  margin: 0 auto;
+  max-width: 1100px;
+  padding: 0 16px 48px;
+  background: var(--bg);
+  color: var(--fg);
+  font: 15px/1.6 system-ui, 'Noto Sans TC', sans-serif;
+}
+header { display: flex; align-items: baseline; justify-content: space-between; gap: 1em; flex-wrap: wrap; }
+h1 small { font-size: 0.5em; color: var(--muted); font-weight: normal; }
+h2 { font-size: 1.05em; margin: 0 0 0.5em; }
+a { color: inherit; }
+.panel { background: var(--panel); border: 1px solid var(--border); border-radius: 8px; padding: 12px 16px; margin: 12px 0; }
+.row { display: flex; align-items: center; gap: 0.75em; flex-wrap: wrap; margin: 0.5em 0; }
+.muted { color: var(--muted); }
+textarea, input, select, button { font: inherit; color: inherit; background: var(--bg); border: 1px solid var(--border); border-radius: 4px; }
+textarea { width: 100%; font-family: ui-monospace, monospace; font-size: 13px; }
+button { padding: 0.25em 0.8em; cursor: pointer; }
+input[size] { max-width: 100%; }
+.grid { display: grid; gap: 0.5em; margin: 0.75em 0; }
+.grid label { display: flex; gap: 0.5em; align-items: center; flex-wrap: wrap; }
+.diff { background: var(--diff-bg); padding: 0.5em; white-space: pre-wrap; word-break: break-all; font-size: 13px; }
+.checklist li { margin: 0.2em 0; }
+.log { font-size: 13px; color: var(--muted); padding-left: 1.2em; }
+.imgbox img { max-width: 100%; border: 1px solid var(--border); }
+
+/* ---------- editor ---------- */
+#editor .ProseMirror {
+  min-height: 300px;
+  max-height: 70vh;
+  overflow: auto;
+  padding: 12px;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  font: 18px/2.1 'Noto Serif TC', 'Source Han Serif TC', serif;
+  white-space: pre-wrap;
+  word-break: break-all;
+  outline: none;
+}
+#editor .ProseMirror p, #editor .ProseMirror h2, #editor .ProseMirror h3 { margin: 0 0 0.6em; }
+#editor .ProseMirror h2 { font-size: 1.3em; }
+#editor .ProseMirror h3 { font-size: 1.15em; }
+
+.ct-atom {
+  display: inline-block;
+  font: 11px/1.4 ui-monospace, monospace;
+  padding: 0 3px;
+  margin: 0 1px;
+  border-radius: 3px;
+  vertical-align: middle;
+  background: var(--atom-bg);
+  color: var(--atom-fg);
+  user-select: none;
+}
+.ct-page { background: var(--page-bg); color: var(--page-fg); font-weight: 600; padding: 1px 6px; }
+.ct-seq { background: var(--seq-bg); color: var(--seq-fg); cursor: grab; font-size: 9px; }
+.hide-seq .ct-seq { display: none; }
+.ct-break { background: transparent; color: var(--muted); padding: 0; }
+.ct-note { font-size: 0.7em; color: var(--note-fg); }
+.ct-margin { font-size: 0.7em; color: var(--note-fg); text-decoration: underline dotted; }
+.ct-big { font-weight: 700; }
+.ct-inverted { background: var(--fg); color: var(--bg); }
+.ct-circled { border: 1px solid currentColor; border-radius: 1em; padding: 0 0.15em; }
+.ct-entity { background: var(--entity-other); border-radius: 2px; }
+.ct-entity-place { background: var(--entity-place); }
+.ct-entity-person { background: var(--entity-person); }
+.ct-entity-date, .ct-entity-era { background: var(--entity-date); }
+.ProseMirror-selectednode { outline: 2px solid #4a90e2; }
+.legend .ct-atom { margin-right: 0.2em; }
+.legend > span { margin-right: 0.6em; }
