@@ -76,9 +76,9 @@ export const schema = new Schema({
     text: { group: 'inline' },
 
     /** <scanbegin …/> with no <scanend/> right before it (start of the text). */
-    pageStart: atom('pageStart', 'ct-page', (n) => `▼ p.${n.attrs.page}`, { file: { default: '' }, page: { default: '' }, y: { default: null } }),
+    pageStart: atom('pageStart', 'ct-page', (n) => `▼ p.${n.attrs.page}`, { file: { default: '' }, page: { default: '' }, y: { default: null } }, { draggable: true }),
     /** <scanend …/> with no <scanbegin/> right after it (end of the text). */
-    pageEnd: atom('pageEnd', 'ct-page', (n) => `▲ p.${n.attrs.page}`, { file: { default: '' }, page: { default: '' } }),
+    pageEnd: atom('pageEnd', 'ct-page', (n) => `▲ p.${n.attrs.page}`, { file: { default: '' }, page: { default: '' } }, { draggable: true }),
     /** <scanend …/><scanbegin …/> — one node so pages can be split/merged by insert/delete. */
     pageBoundary: atom(
       'pageBoundary', 'ct-page',
@@ -92,9 +92,10 @@ export const schema = new Schema({
         beginPage: { default: '' },
         y: { default: null },
       },
+      { draggable: true },
     ),
-    scanBreak: atom('scanBreak', 'ct-break', (n) => `⏎${sup(n.attrs.y)}`, { file: { default: '' }, y: { default: null } }),
-    scanSkip: atom('scanSkip', 'ct-skip', (n) => `␣${n.attrs.y ?? ''}`, { file: { default: '' }, y: { default: null } }),
+    scanBreak: atom('scanBreak', 'ct-break', (n) => `⏎${sup(n.attrs.y)}`, { file: { default: '' }, y: { default: null } }, { draggable: true }),
+    scanSkip: atom('scanSkip', 'ct-skip', (n) => `␣${n.attrs.y ?? ''}`, { file: { default: '' }, y: { default: null } }, { draggable: true }),
     /** <seq sid/> — protected: may move (between neighbours) but never be deleted or renumbered. */
     seq: atom('seq', 'ct-seq', (n) => `${n.attrs.sid}`, { sid: { default: '' } }, { draggable: true }),
     /** wiki '|' */
