@@ -14,21 +14,25 @@ export function pageAt(doc: PMNode, pos: number): { file: string; page: string }
 }
 
 /**
- * Split the current page at the start of the selection: insert
+ * Split the page at `pos` (default: start of the selection): insert
  * <scanend/><scanbegin/> with page+1. Never deletes selected text.
  * (Renumbering the following pages is a separate, explicit operation.)
  */
-export const splitPage: Command = (state, dispatch) => {
-  const { from } = state.selection;
-  const cur = pageAt(state.doc, from);
-  if (!cur) return false;
-  const next = /^\d+$/.test(cur.page) ? String(Number(cur.page) + 1) : cur.page;
-  const node = schema.nodes.pageBoundary.create({
-    endFile: cur.file,
-    endPage: cur.page,
-    beginFile: cur.file,
-    beginPage: next,
-  });
-  dispatch?.(state.tr.insert(from, node).scrollIntoView());
-  return true;
-};
+export function splitPageAt(pos?: number): Command {
+  return (state, dispatch) => {
+    const from = pos ?? state.selection.from;
+    const cur = pageAt(state.doc, from);
+    if (!cur) return false;
+    const next = /^\d+$/.test(cur.page) ? String(Number(cur.page) + 1) : cur.page;
+    const node = schema.nodes.pageBoundary.create({
+      endFile: cur.file,
+      endPage: cur.page,
+      beginFile: cur.file,
+      beginPage: next,
+    });
+    dispatch?.(state.tr.insert(from, node).scrollIntoView());
+    return true;
+  };
+}
+
+export const splitPage: Command = splitPageAt();

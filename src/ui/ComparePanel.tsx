@@ -5,11 +5,33 @@
  */
 import { useState } from 'preact/hooks';
 import type { Page, Seg } from '../core/pageIndex';
+import { signal } from '@preact/signals';
 import { currentPage, cursorPos, getView, jumpTo, mappings, pages, showSeq, sideTab } from '../app/state';
+import { textRuns, stripPunct } from '../core/punct';
 import { PROOF_LABEL, proofStatus, setProofread } from '../app/proofread';
 import { imageUrlFor } from '../app/images';
 import { mergeWithPrevious, shiftPageNumbers } from '../editor/commands';
 import { MappingForm } from './FilesPanel';
+
+/** Show punctuation in the page view (off: the layout matches the unpunctuated original). */
+export const showPunct = signal(false);
+
+/**
+ * Drop punctuation from text segments, splitting them into runs that keep
+ * their own document position (so clicking a character still maps correctly).
+ */
+function visibleSegs(segs: Seg[], keepPunct: boolean): Seg[] {
+  if (keepPunct) return segs;
+  const out: Seg[] = [];
+  for (const s of segs) {
+    if (s.k === 'text') for (const r of textRuns(s.text)) out.push({ ...s, text: r.text, from: s.from + r.offset });
+    else if (s.k === 'coll') {
+      const text = stripPunct(s.text);
+      if (text) out.push({ ...s, text });
+    } else out.push(s);
+  }
+  return out;
+}
 
 const NOTE_MARKS = new Set(['note', 'margin']);
 const isNote = (s: Seg) => (s.k === 'text' || s.k === 'coll') && s.marks.some((m) => NOTE_MARKS.has(m));
@@ -90,7 +112,9 @@ function posFromClick(e: MouseEvent): number | null {
 }
 
 export function PageText({ page }: { page: Page }) {
-  const height = Math.max(10, ...page.lines.map((l) => l.y + lineCells(l.segs))) + 1;
+  const keep = showPunct.value;
+  const lines = page.lines.map((l) => ({ ...l, segs: visibleSegs(l.segs, keep) }));
+  const height = Math.max(10, ...lines.map((l) => l.y + lineCells(l.segs))) + 1;
   const pos = cursorPos.value;
   let curLine = -1;
   page.lines.forEach((l, i) => {
@@ -105,7 +129,7 @@ export function PageText({ page }: { page: Page }) {
         if (p !== null) jumpTo(p);
       }}
     >
-      {page.lines.map((l, i) => (
+      {lines.map((l, i) => (
         <div key={i} class={`vcol ${i === curLine && pos >= page.from && pos <= page.to ? 'cur' : ''}`} style={{ paddingInlineStart: `${l.y}em` }}>
           <Column segs={l.segs} />
         </div>
@@ -137,6 +161,7 @@ function ImagePane({ page }: { page: Page }) {
         </button>
         <button onClick={() => setZoom((z) => Math.max(0.5, z / 1.25))}>－</button>
         <button onClick={() => setZoom((z) => Math.min(6, z * 1.25))}>＋</button>
+        <span class="muted small">{Math.round(zoom * 100)}%・拖曳平移・Ctrl+滾輪縮放</span>
         <a class="muted small" href={url} target="_blank" rel="noreferrer noopener">
           開新分頁
         </a>
@@ -148,8 +173,40 @@ function ImagePane({ page }: { page: Page }) {
           <button onClick={() => (sideTab.value = 'files')}>檢查圖片對照表</button>
         </div>
       ) : null}
-      <div class="imgscroll">
+      <div
+        class="imgscroll grab"
+        onPointerDown={(e) => {
+          // drag to pan
+          if (e.button !== 0) return;
+          const el = e.currentTarget as HTMLElement;
+          el.setPointerCapture(e.pointerId);
+          el.classList.add('grabbing');
+          const sx = e.clientX;
+          const sy = e.clientY;
+          const sl = el.scrollLeft;
+          const st = el.scrollTop;
+          const move = (ev: PointerEvent) => {
+            el.scrollLeft = sl - (ev.clientX - sx);
+            el.scrollTop = st - (ev.clientY - sy);
+          };
+          const up = () => {
+            el.classList.remove('grabbing');
+            el.removeEventListener('pointermove', move);
+            el.removeEventListener('pointerup', up);
+          };
+          el.addEventListener('pointermove', move);
+          el.addEventListener('pointerup', up);
+          e.preventDefault();
+        }}
+        onWheel={(e) => {
+          // Ctrl/⌘ + wheel zooms
+          if (!e.ctrlKey && !e.metaKey) return;
+          e.preventDefault();
+          setZoom((z) => Math.min(6, Math.max(0.5, z * (e.deltaY < 0 ? 1.15 : 1 / 1.15))));
+        }}
+      >
         <img
+          draggable={false}
           key={url}
           src={url}
           alt={`原典 p.${page.page}`}
@@ -191,6 +248,9 @@ export function ComparePanel() {
         </button>
         {real && <span class="muted small">file {page.file}</span>}
         <span class="grow" />
+        <label class="check small" title="標點是電子化時加的，原書沒有；預設隱藏以便和影像逐字對照">
+          <input type="checkbox" id="showPunct" checked={showPunct.value} onChange={(e) => (showPunct.value = (e.target as HTMLInputElement).checked)} /> 標點
+        </label>
         {real && (
           <label class={`check proof st-${st}`} title={PROOF_LABEL[st]}>
             <input type="checkbox" id="proofCheck" checked={st !== 'none'} onChange={(e) => setProofread(page, (e.target as HTMLInputElement).checked)} />
@@ -214,6 +274,16 @@ export function ComparePanel() {
           </button>
           <button onClick={() => cmd(shiftPageNumbers(list, idx, 1))} title="本頁及之後各頁（同 file）頁碼 +1">
             +1
+          </button>
+          <button
+            onClick={() => {
+              const n = prompt(`本頁（p.${page.page}）起，頁碼改為從幾開始？之後各頁（同 file）依序位移，保留缺頁。`, page.page);
+              const delta = Number(n) - Number(page.page);
+              if (n !== null && Number.isInteger(Number(n)) && delta) cmd(shiftPageNumbers(list, idx, delta));
+            }}
+            title="指定本頁頁碼，之後各頁同步位移"
+          >
+            設定…
           </button>
         </div>
       )}

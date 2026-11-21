@@ -59,7 +59,8 @@ export function entityAt(state: EditorState): { mark: ReturnType<MarkType['creat
   }
   const entityOf = (i: number) => (i >= 0 && i < parent.childCount ? [...parent.child(i).marks].reverse().find((m) => m.type.name === 'entity') : undefined);
   const idx = $pos.index();
-  const ci = entityOf(idx) ? idx : entityOf(idx - 1) ? idx - 1 : -1;
+  // the node before counts only when the cursor sits exactly on a node boundary
+  const ci = entityOf(idx) ? idx : $pos.textOffset === 0 && entityOf(idx - 1) ? idx - 1 : -1;
   if (ci < 0) return null;
   const mark = entityOf(ci)!;
   let i = ci;
@@ -104,16 +105,20 @@ export function setNodeAttrs(tr: Transaction, pos: number, patch: Record<string,
   return tr.setNodeMarkup(pos, null, attrs);
 }
 
-function fileHere(state: EditorState): string {
-  return pageAt(state.doc, state.selection.from)?.file ?? '';
+function fileHere(state: EditorState, pos = state.selection.from): string {
+  return pageAt(state.doc, pos)?.file ?? '';
 }
 
-/** Insert <scanbreak/> (end of an original column) at the cursor. */
-export const insertScanBreak: Command = (state, dispatch) => {
-  const node = schema.nodes.scanBreak.create({ file: fileHere(state) });
-  dispatch?.(state.tr.insert(state.selection.from, node).scrollIntoView());
-  return true;
-};
+/** Insert <scanbreak/> (end of an original column) at `pos` (default: the cursor). */
+export function insertScanBreakAt(pos?: number): Command {
+  return (state, dispatch) => {
+    const at = pos ?? state.selection.from;
+    const node = schema.nodes.scanBreak.create({ file: fileHere(state, at) });
+    dispatch?.(state.tr.insert(at, node).scrollIntoView());
+    return true;
+  };
+}
+export const insertScanBreak: Command = insertScanBreakAt();
 
 export function insertScanSkip(n: number): Command {
   return (state, dispatch) => {

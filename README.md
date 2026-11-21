@@ -14,9 +14,15 @@ Copy a text from a cText edit box, proofread it page by page against the scanned
   - Merge pages by deleting a page boundary.
   - Shift page numbers from a given page onward.
   - Matching `scanend` numbers are corrected automatically.
-- **Proofreading view.** The current page is laid out like the original book: vertical columns, `y` offsets in character cells, and notes as double small lines. The scan image sits beside it, and each page can be ticked as proofread. A ticked page is flagged again if its text changes.
+- **Proofreading view.** The current page is laid out like the original book: vertical columns, `y` offsets in character cells, and notes as double small lines. Punctuation is hidden by default, since the original prints have none, so the text lines up with the scan character by character. The scan image sits beside it (drag to pan, Ctrl+wheel to zoom), and each page can be ticked as proofread. A ticked page is flagged again if its text changes.
 - **Scan image mapping.** Paste one example image URL and the editor infers the URL template for that scan file id. A local folder of images also works.
-- **Lint.** Flags duplicate or out-of-order page numbers, mismatched file ids, half-width punctuation and unknown tags.
+- **Annotation.** A global dictionary maps terms to cText entities.
+  - Build it from the `<entity>` tags already in a text, add entries by hand (or from the editor selection), or import and export it as JSON.
+  - The editor lists untagged occurrences of dictionary terms, including ones split by a column break. Accept or reject them one by one or per term; rejections are remembered per project.
+- **Click-to-break mode.** Click between characters to insert a column break (Shift+click splits the page), for aligning OCR text with the scan.
+- **Plain text import.** Text without scan tags (e.g. OCR output) can be given page and column markers on import: each line becomes a column, and a blank line starts a new page.
+- **Lint.** Flags duplicate or out-of-order page numbers, mismatched file ids, half-width punctuation and unknown tags. Half-width punctuation can be fixed one at a time or all at once.
+- **Adjustable layout.** The dividers between the page list, the text and the side panel can be dragged. Widths are remembered per browser.
 - **Export review.** Shows a character diff against the pasted text, plus a summary of structural changes (moved `seq`, added or removed pages, changed line breaks) for the cText edit summary.
 - **Raw text mode.** Edit the cText source directly when needed.
 

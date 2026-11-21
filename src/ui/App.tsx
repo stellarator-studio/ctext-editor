@@ -1,5 +1,5 @@
 import { useEffect } from 'preact/hooks';
-import { loadMappings, project } from '../app/state';
+import { loadDictionary, loadMappings, project } from '../app/state';
 import { getProject } from '../store/projects';
 import { Home } from './Home';
 import { Workspace } from './Workspace';
@@ -12,6 +12,7 @@ function readHash(): string | null {
 export function App() {
   useEffect(() => {
     void loadMappings();
+    void loadDictionary();
     const open = async () => {
       const id = readHash();
       if (!id) {
