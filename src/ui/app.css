@@ -15,6 +15,9 @@
   --seq-bg: #dff0df;
   --seq-fg: #2c6e2c;
   --note-fg: #8a5a2b;
+  --note-bg: #fbf1e4;
+  --note-edge: #d9b58c;
+  --space-mark: #c9a77f;
   --ent-place: #cfe5ff;
   --ent-person: #ffd9e1;
   --ent-date: #e9dcff;
@@ -44,6 +47,9 @@
     --seq-bg: #22402a;
     --seq-fg: #9fd89f;
     --note-fg: #d9a877;
+    --note-bg: #33291d;
+    --note-edge: #7a5a36;
+    --space-mark: #8f7350;
     --ent-place: #1f3a57;
     --ent-person: #55253a;
     --ent-date: #3a2b57;
@@ -133,7 +139,20 @@ button[aria-pressed='true'] { background: var(--hover); border-color: var(--acce
 }
 
 /* page list */
-.pagelist { display: flex; flex-direction: column; min-height: 0; height: 100%; }
+.pagelist { display: flex; flex-direction: column; min-height: 0; flex: 1; }
+
+/* chapters (above the page list) */
+.chapters { border-bottom: 1px solid var(--border); display: flex; flex-direction: column; max-height: 40%; min-height: 0; }
+.chapters-head { padding: 6px 6px 4px 10px; display: flex; gap: 6px; align-items: center; }
+.chapters-head button { padding: 1px 6px; }
+.chapter-list { list-style: none; margin: 0; padding: 0 0 4px; overflow: auto; }
+.chapter-list li { display: flex; align-items: center; }
+.chapterlink { flex: 1; min-width: 0; border: none; border-radius: 0; background: none; padding: 2px 10px; justify-content: space-between; gap: 4px; }
+.chapter-title { overflow: hidden; text-overflow: ellipsis; }
+.chapter-list li[aria-current='true'] { background: var(--cur); }
+.chapter-list li[aria-current='true'] .chapterlink { font-weight: 600; }
+.chapter-input { width: 12em; font-weight: 500; }
+dialog.add-chapter { width: min(720px, calc(100vw - 32px)); }
 .pagelist-head { padding: 8px 10px; border-bottom: 1px solid var(--border); display: flex; flex-wrap: wrap; gap: 2px 8px; align-items: baseline; }
 .progress { width: 100%; height: 4px; background: var(--border); border-radius: 2px; overflow: hidden; }
 .progress > div { height: 100%; background: var(--ok); }
@@ -182,8 +201,19 @@ button[aria-pressed='true'] { background: var(--hover); border-color: var(--acce
 .ct-seq { background: var(--seq-bg); color: var(--seq-fg); font-size: 9.5px; }
 .hide-seq .ct-seq { display: none; }
 .ct-break { background: transparent; color: var(--muted); font-size: 13px; padding: 0 3px; }
-.ct-note { font-size: 0.68em; color: var(--note-fg); }
-.ct-margin { font-size: 0.68em; color: var(--note-fg); text-decoration: underline dotted; }
+.ct-note, .ct-margin {
+  font-size: 0.68em; color: var(--note-fg); background: var(--note-bg);
+  /* the edges show where a note starts and ends, also when a marker sits at its edge or two notes touch */
+  border-inline: 1.5px solid var(--note-edge); border-radius: 3px; padding-inline: 1px;
+}
+.ct-margin { text-decoration: underline dotted; border-style: dashed; }
+.ct-note .ct-note, .ct-margin .ct-margin { border: 0; padding: 0; }
+.ct-note .ct-atom, .ct-margin .ct-atom { box-shadow: inset 0 -2px 0 var(--note-edge); }
+/* spaces are invisible in text but matter for layout (padding in notes, table-like rows) */
+.ct-space { background: repeating-linear-gradient(90deg, transparent 0 2px, var(--space-mark) 2px 3px) bottom / 100% 1.5px no-repeat; }
+.ct-space.half { background-color: color-mix(in srgb, var(--warn) 22%, transparent); }
+/* where the heading's * / ** sits relative to the leading markers */
+.ct-stars { font: 600 11px/1 ui-monospace, monospace; color: var(--accent); background: var(--hover); border-radius: 3px; padding: 1px 4px; margin: 0 2px; vertical-align: middle; user-select: none; }
 .ct-big { font-weight: 700; }
 .ct-inverted { background: var(--fg); color: var(--panel); }
 .ct-circled { border: 1px solid currentColor; border-radius: 1em; padding: 0 0.15em; }
@@ -220,12 +250,18 @@ button[aria-pressed='true'] { background: var(--hover); border-color: var(--acce
   margin-left: auto; cursor: text; outline: none;
 }
 .vpage:focus-visible .vcol.cur, .vpage:focus .vcol.cur { box-shadow: inset 0 0 0 1px var(--accent); }
-.vcol { white-space: nowrap; padding-block: 0 2px; border-left: 1px dashed transparent; }
+.vcol { white-space: pre; padding-block: 0 2px; border-left: 1px dashed transparent; }
 .vcol.cur { background: var(--cur); }
 .v-note {
-  display: inline-block; font-size: 0.5em; line-height: 1; white-space: normal; word-break: break-all;
+  display: inline-block; font-size: 0.5em; line-height: 1; white-space: pre;
   color: var(--note-fg); vertical-align: top;
+  /* a light frame so adjacent notes ({{AB}}{{　}}) are not mistaken for one */
+  outline: 1px solid color-mix(in srgb, var(--note-edge) 55%, transparent); outline-offset: -0.5px;
 }
+.v-nl { display: block; min-block-size: 1em; }
+.v-blank { outline: 1px dashed var(--space-mark); outline-offset: -1px; }
+.v-sp { background: repeating-linear-gradient(0deg, transparent 0 2px, var(--space-mark) 2px 3px) left / 1.5px 100% no-repeat; }
+.v-sp.half { background-color: color-mix(in srgb, var(--warn) 25%, transparent); }
 .v-skip { display: inline-block; width: 1em; }
 .v-seq { display: inline-block; width: 0.9em; height: 0; border-top: 1.5px dotted var(--seq-fg); vertical-align: middle; }
 .hide-seq .v-seq { display: none; }

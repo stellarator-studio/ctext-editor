@@ -1,4 +1,4 @@
-import { db, type FileMapping, type Project } from './db';
+import { db, type Chapter, type FileMapping, type LegacyProject, type Project } from './db';
 import { mergeEntries, type DictEntry } from '../core/annotate';
 
 const now = () => new Date().toISOString();
@@ -11,17 +11,50 @@ export function guessTitle(text: string): string {
   return (heading ?? plain.trim().slice(0, 12)).trim() || '未命名';
 }
 
-export function newProject(text: string, title = guessTitle(text)): Project {
+export function newProject(title: string): Project {
   const t = now();
-  return { id: newId(), title, text, originalText: text, createdAt: t, updatedAt: t, proofread: {} };
+  return { id: newId(), title, createdAt: t, updatedAt: t, chapters: [], rejected: [] };
+}
+
+export function newChapter(projectId: string, text: string, title = guessTitle(text)): Chapter {
+  const t = now();
+  return { id: newId(), projectId, title, text, originalText: text, proofread: {}, createdAt: t, updatedAt: t };
+}
+
+/** Create a project with its first chapter. */
+export async function createProject(text: string, title = guessTitle(text)): Promise<Project> {
+  const p = newProject(title);
+  const c = newChapter(p.id, text, title);
+  await saveChapter(c);
+  return saveProject({ ...p, chapters: [c.id] });
+}
+
+/**
+ * Move the text of a project saved before chapters existed into its first
+ * chapter. The chapter id is derived from the project id, so two reads racing
+ * (project list and opened project) write the same chapter.
+ */
+async function migrate(p: LegacyProject): Promise<Project> {
+  if (Array.isArray(p.chapters)) return p as Project;
+  const { text, originalText, proofread, ...rest } = p;
+  const chapters: string[] = [];
+  if (typeof text === 'string') {
+    const c: Chapter = { ...newChapter(p.id, text, p.title), id: `${p.id}:1`, originalText: originalText ?? text, proofread: proofread ?? {}, createdAt: p.createdAt, updatedAt: p.updatedAt };
+    await saveChapter(c);
+    chapters.push(c.id);
+  }
+  const project: Project = { ...rest, chapters };
+  await (await db()).put('projects', project);
+  return project;
 }
 
 export async function listProjects(): Promise<Project[]> {
-  const all = await (await db()).getAll('projects');
+  const all = await Promise.all((await (await db()).getAll('projects')).map(migrate));
   return all.sort((a, b) => b.updatedAt.localeCompare(a.updatedAt));
 }
-export async function getProject(id: string) {
-  return (await db()).get('projects', id);
+export async function getProject(id: string): Promise<Project | undefined> {
+  const p = await (await db()).get('projects', id);
+  return p && migrate(p);
 }
 export async function saveProject(p: Project): Promise<Project> {
   const saved = { ...p, updatedAt: now() };
@@ -29,7 +62,24 @@ export async function saveProject(p: Project): Promise<Project> {
   return saved;
 }
 export async function deleteProject(id: string) {
-  await (await db()).delete('projects', id);
+  const d = await db();
+  for (const c of await d.getAllFromIndex('chapters', 'projectId', id)) await d.delete('chapters', c.id);
+  await d.delete('projects', id);
+}
+
+/** Chapters of a project in the project's order (chapters missing from the order list are appended). */
+export async function listChapters(p: Project): Promise<Chapter[]> {
+  const all = await (await db()).getAllFromIndex('chapters', 'projectId', p.id);
+  const rank = new Map(p.chapters.map((id, i) => [id, i]));
+  return all.sort((a, b) => (rank.get(a.id) ?? 1e9) - (rank.get(b.id) ?? 1e9) || a.createdAt.localeCompare(b.createdAt));
+}
+export async function saveChapter(c: Chapter): Promise<Chapter> {
+  const saved = { ...c, updatedAt: now() };
+  await (await db()).put('chapters', saved);
+  return saved;
+}
+export async function deleteChapter(id: string) {
+  await (await db()).delete('chapters', id);
 }
 
 // ---- project files (backup / move between machines) ----
@@ -43,15 +93,27 @@ export function fileIdsIn(text: string): Set<string> {
   return ids;
 }
 
+/** File id and page number of the last page marker in a text (to continue numbering in the next chapter). */
+export function lastPageOf(text: string): { file: string; page: number } | null {
+  let last: { file: string; page: number } | null = null;
+  for (const m of text.matchAll(/<scan(?:begin|end)\b([^>]*)>/g)) {
+    const file = /\bfile="([^"]*)"/.exec(m[1])?.[1];
+    const page = Number(/\bpage="([^"]*)"/.exec(m[1])?.[1]);
+    if (file !== undefined && Number.isInteger(page)) last = { file, page };
+  }
+  return last;
+}
+
 /**
- * A project file also carries the image mappings of the file ids the text
- * uses and the annotation dictionary, so opening it on another machine (or
- * after clearing the browser) restores the whole working setup.
+ * A project file holds all chapters, plus the image mappings of the file ids
+ * they use and the annotation dictionary, so opening it on another machine
+ * (or after clearing the browser) restores the whole working setup.
  */
 export async function projectFile(p: Project): Promise<Blob> {
-  const ids = fileIdsIn(p.text);
+  const chapters = await listChapters(p);
+  const ids = new Set(chapters.flatMap((c) => [...fileIdsIn(c.text)]));
   const [maps, dict] = await Promise.all([listMappings(), listDictionary()]);
-  const data = { format: PROJECT_FORMAT, version: 2, project: p, mappings: maps.filter((m) => ids.has(m.fileId)), dictionary: dict };
+  const data = { format: PROJECT_FORMAT, version: 3, project: p, chapters, mappings: maps.filter((m) => ids.has(m.fileId)), dictionary: dict };
   return new Blob([JSON.stringify(data, null, 1)], { type: 'application/json' });
 }
 
@@ -68,19 +130,37 @@ export interface ImportResult {
   termsAdded: number;
 }
 
-/** Read a project file and store it, together with its image mappings and dictionary. */
+type ChapterData = Partial<Chapter> & { text: string };
+
+/** Read a project file (v2: one text; v3: chapters) and store it, together with its image mappings and dictionary. */
 export async function importProjectFile(json: string): Promise<ImportResult> {
   const data = JSON.parse(json);
-  if (data?.format !== PROJECT_FORMAT || typeof data.project?.text !== 'string') throw new Error('不是 cText Editor 專案檔');
-  const p = data.project as Project;
-  const exists = await getProject(p.id);
-  const project = await saveProject({
-    ...newProject(p.text, p.title),
-    originalText: p.originalText ?? p.text,
-    proofread: p.proofread ?? {},
-    rejected: p.rejected ?? [],
-    ...(exists ? { title: `${p.title}（匯入）` } : { id: p.id, createdAt: p.createdAt }),
-  });
+  const src = data?.project as (LegacyProject & { text?: string }) | undefined;
+  const chapterData: ChapterData[] = Array.isArray(data?.chapters)
+    ? data.chapters.filter((c: ChapterData) => typeof c?.text === 'string')
+    : typeof src?.text === 'string'
+      ? [{ text: src.text, originalText: src.originalText, proofread: src.proofread, title: src.title }]
+      : [];
+  if (data?.format !== PROJECT_FORMAT || !src || !chapterData.length) throw new Error('不是 cText Editor 專案檔');
+
+  const exists = await getProject(String(src.id));
+  const base = newProject(String(src.title ?? '未命名'));
+  const project: Project = {
+    ...base,
+    rejected: Array.isArray(src.rejected) ? src.rejected : [],
+    ...(exists ? { title: `${base.title}（匯入）` } : { id: String(src.id), createdAt: src.createdAt ?? base.createdAt }),
+  };
+  // chapter ids are always new: the same file may be imported twice
+  for (const c of chapterData) {
+    const ch: Chapter = {
+      ...newChapter(project.id, c.text, c.title ?? project.title),
+      originalText: c.originalText ?? c.text,
+      proofread: c.proofread ?? {},
+    };
+    await saveChapter(ch);
+    project.chapters.push(ch.id);
+  }
+  const saved = await saveProject(project);
 
   let mappingsAdded = 0;
   const mappingsKept: string[] = [];
@@ -96,7 +176,7 @@ export async function importProjectFile(json: string): Promise<ImportResult> {
   const { put, removed, added, termsAdded } = mergeEntries(await listDictionary(), validEntries(data.dictionary), (e) => ({ ...e, id: newId(), source: 'import' }));
   for (const e of put) await saveEntry(e);
   for (const id of removed) await deleteEntry(id);
-  return { project, mappingsAdded, mappingsKept, entriesAdded: added, termsAdded };
+  return { project: saved, mappingsAdded, mappingsKept, entriesAdded: added, termsAdded };
 }
 
 // ---- file id → image mappings ----

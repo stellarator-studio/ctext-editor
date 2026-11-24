@@ -221,7 +221,7 @@ test('source mode edits are applied when switching back', async ({ page }) => {
   await page.locator('.cm-content').click();
   await page.keyboard.press('Control+End');
   await page.keyboard.insertText('尾');
-  await page.click('.seg button:has-text("所見即所得")');
+  await page.click('.seg button:has-text("編輯模式")');
   await expect(page.locator('.ProseMirror')).toContainText('尾');
 });
 

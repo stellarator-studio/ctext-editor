@@ -76,7 +76,7 @@ test('find in raw text mode searches the whole source', async ({ page }) => {
   await page.click('.findbar button[aria-expanded]');
   await page.locator('#replaceInput').fill('結尾');
   await page.click('.findbar button:has-text("全部取代")');
-  await page.click('.seg button:has-text("所見即所得")');
+  await page.click('.seg button:has-text("編輯模式")');
   await expect(page.locator('.ProseMirror')).toContainText('結尾');
 });
 

@@ -1,6 +1,8 @@
 import { useState } from 'preact/hooks';
 import { diagnostics, getView, jumpTo } from '../app/state';
 import { fixHalfWidth } from '../editor/punctuation';
+import { fixHeadingStars, joinNotes } from '../editor/commands';
+import type { Command } from 'prosemirror-state';
 import type { Severity } from '../core/validate';
 
 const ICON: Record<Severity, string> = { error: '⛔', warning: '⚠', info: 'ℹ' };
@@ -10,10 +12,13 @@ export function IssuesPanel() {
   const all = diagnostics.value;
   const list = showInfo ? all : all.filter((d) => d.severity !== 'info');
   const halfWidth = all.filter((d) => d.fix === 'halfwidth').length;
-  const fix = (from?: number, to?: number) => {
+  const run = (c: Command) => {
     const v = getView();
-    if (v) fixHalfWidth(from, to)(v.state, v.dispatch);
+    if (v) c(v.state, v.dispatch);
   };
+  const fix = (from?: number, to?: number) => run(fixHalfWidth(from, to));
+  const joins = all.filter((d) => d.fix === 'joinNotes').length;
+  const stars = all.filter((d) => d.fix === 'headingStars');
   return (
     <div class="issues pad">
       <div class="row spread">
@@ -31,6 +36,20 @@ export function IssuesPanel() {
           </button>
         </div>
       )}
+      {(joins > 0 || stars.length > 0) && (
+        <div class="row tight">
+          {joins > 0 && (
+            <button onClick={() => run(joinNotes())} title="{{AB}}{{　}} → {{AB　}}">
+              合併所有緊鄰的夾注（{joins}）
+            </button>
+          )}
+          {stars.length > 0 && (
+            <button onClick={() => [...stars].reverse().forEach((d) => run(fixHeadingStars(d.from)))} title="<seq/>*標題 → *<seq/>標題">
+              修正所有標題記號位置（{stars.length}）
+            </button>
+          )}
+        </div>
+      )}
       {list.length === 0 ? (
         <p class="muted">沒有問題。</p>
       ) : (
@@ -40,9 +59,12 @@ export function IssuesPanel() {
               <button class="link" onClick={() => jumpTo(d.from, 'node')}>
                 {ICON[d.severity]} {d.message}
               </button>
-              {d.fix === 'halfwidth' && (
-                <button class="small" onClick={() => fix(d.from, d.to)}>
-                  修正
+              {d.fix && (
+                <button
+                  class="small"
+                  onClick={() => run(d.fix === 'halfwidth' ? fixHalfWidth(d.from, d.to) : d.fix === 'joinNotes' ? joinNotes(d.from) : fixHeadingStars(d.from))}
+                >
+                  {d.fix === 'joinNotes' ? '合併' : '修正'}
                 </button>
               )}
             </li>

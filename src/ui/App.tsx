@@ -1,12 +1,13 @@
 import { useEffect } from 'preact/hooks';
-import { loadDictionary, loadMappings, project } from '../app/state';
+import { loadDictionary, loadMappings, loadProject, project, switchChapter } from '../app/state';
 import { getProject } from '../store/projects';
 import { Home } from './Home';
 import { Workspace } from './Workspace';
 
-/** Open project is reflected in the URL hash (#p=<id>) so a reload reopens it. */
-function readHash(): string | null {
-  return new URLSearchParams(location.hash.slice(1)).get('p');
+/** Open project and chapter are reflected in the URL hash (#p=<id>&c=<chapter id>) so a reload reopens them. */
+function readHash(): { p: string | null; c: string | null } {
+  const q = new URLSearchParams(location.hash.slice(1));
+  return { p: q.get('p'), c: q.get('c') };
 }
 
 export function App() {
@@ -14,13 +15,10 @@ export function App() {
     void loadMappings();
     void loadDictionary();
     const open = async () => {
-      const id = readHash();
-      if (!id) {
-        project.value = null;
-        return;
-      }
-      if (project.value?.id === id) return;
-      project.value = (await getProject(id)) ?? null;
+      const { p: id, c } = readHash();
+      if (!id) return loadProject(null);
+      if (project.value?.id === id) return c ? switchChapter(c) : undefined;
+      await loadProject((await getProject(id)) ?? null, c);
     };
     void open();
     window.addEventListener('hashchange', open);

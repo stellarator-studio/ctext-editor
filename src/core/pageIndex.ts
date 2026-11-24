@@ -8,18 +8,21 @@
 import type { Node as PMNode } from 'prosemirror-model';
 
 export type Seg =
-  | { k: 'text'; text: string; from: number; marks: string[]; entity?: string }
-  /** blank character cells (scanskip y=n) */
-  | { k: 'skip'; n: number; from: number }
+  /** `note`: iid of the {{ }} / {{{ }}} span the text belongs to, so adjacent notes stay apart */
+  | { k: 'text'; text: string; from: number; marks: string[]; entity?: string; note?: number }
+  /** blank character cells (scanskip y=n); `note` if the scanskip sits inside a note */
+  | { k: 'skip'; n: number; from: number; note?: number }
   | { k: 'seq'; sid: string; from: number }
   /** collation: shows the base-text (底本) reading */
-  | { k: 'coll'; text: string; from: number; marks: string[] };
+  | { k: 'coll'; text: string; from: number; marks: string[]; note?: number };
 
 export interface Line {
   /** leading blank cells */
   y: number;
   /** position of the scanBreak that starts this line (null for the first line) */
   breakPos: number | null;
+  /** iid of the note the starting scanBreak sits in (`{{AB<scanbreak/>CD}}`) */
+  inNote?: number;
   from: number;
   segs: Seg[];
 }
@@ -48,6 +51,12 @@ const toInt = (v: unknown) => {
   const n = Number(v);
   return Number.isFinite(n) && n > 0 ? Math.floor(n) : 0;
 };
+
+/** iid of the note-like span ({{ }} or {{{ }}}) on a node, if any. */
+function noteOf(node: PMNode): { note?: number } {
+  const m = node.marks.find((x) => x.type.name === 'note' || x.type.name === 'margin');
+  return m ? { note: m.attrs.iid as number } : {};
+}
 
 function fnv1a(s: string): string {
   let h = 0x811c9dc5;
@@ -123,12 +132,13 @@ export function buildPageIndex(doc: PMNode): Page[] {
       }
       case 'scanBreak': {
         const p = ensure(pos);
-        p.lines.push({ y: toInt(a.y), breakPos: pos, from: pos + node.nodeSize, segs: [] });
+        const n = noteOf(node).note;
+        p.lines.push({ y: toInt(a.y), breakPos: pos, from: pos + node.nodeSize, segs: [], ...(n !== undefined ? { inNote: n } : {}) });
         canon += `\n${a.y ?? ''}|`; lastSig = '\0';
         break;
       }
       case 'scanSkip':
-        line(ensure(pos)).segs.push({ k: 'skip', n: toInt(a.y) || 1, from: pos });
+        line(ensure(pos)).segs.push({ k: 'skip', n: toInt(a.y) || 1, from: pos, ...noteOf(node) });
         canon += `_${a.y ?? ''}`; lastSig = '\0';
         break;
       case 'seq':
@@ -136,12 +146,12 @@ export function buildPageIndex(doc: PMNode): Page[] {
         break;
       case 'collation': {
         const text = a.kind === 'add' ? '' : a.orig;
-        if (text) line(ensure(pos)).segs.push({ k: 'coll', text, from: pos, marks: node.marks.map((m) => m.type.name) });
+        if (text) line(ensure(pos)).segs.push({ k: 'coll', text, from: pos, marks: node.marks.map((m) => m.type.name), ...noteOf(node) });
         canon += `(${a.orig}|${a.corr}|${a.note})`; lastSig = '\0';
         break;
       }
       case 'missing':
-        line(ensure(pos)).segs.push({ k: 'text', text: '●', from: pos, marks: node.marks.map((m) => m.type.name) });
+        line(ensure(pos)).segs.push({ k: 'text', text: '●', from: pos, marks: node.marks.map((m) => m.type.name), ...noteOf(node) });
         canon += `●${a.desc}`; lastSig = '\0';
         break;
       case 'text': {
@@ -153,6 +163,7 @@ export function buildPageIndex(doc: PMNode): Page[] {
           from: pos,
           marks: node.marks.map((m) => m.type.name),
           ...(ent ? { entity: ent.attrs.type as string } : {}),
+          ...noteOf(node),
         });
         p.chars += [...node.text!].length;
         canonText(node.marks.map((m) => m.type.name).join(','), node.text!);

@@ -1,7 +1,7 @@
 /**
  * Find / replace bar for both editing modes.
  *
- * - 所見即所得: searches the text (tags hidden). With 跨標記, column / page
+ * - 編輯模式: searches the text (tags hidden). With 跨標記, column / page
  *   breaks and seq anchors inside a term are ignored (英吉⏎利 matches 英吉利);
  *   replacing keeps those markers.
  * - 原始文字: searches the whole cText source, tags included. (The browser's
