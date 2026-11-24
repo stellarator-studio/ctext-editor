@@ -80,7 +80,7 @@ export function SourceView({ initial, onLeave }: { initial: string; onLeave: (te
   return (
     <div class="source-wrap">
       <div class="row tight pad-x">
-        <span class="muted grow">原始 cText 文字。可直接修改標籤；切回「所見即所得」時重新解析。</span>
+        <span class="muted grow">原始 cText 文字。可直接修改標籤；切回編輯模式時重新解析。</span>
         <button onClick={() => (findBar.value = { replace: false, seed: selectionSeed() })} title="搜尋與取代整份原始文字 (Ctrl+F / Ctrl+H)">
           搜尋
         </button>

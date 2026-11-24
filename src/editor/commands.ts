@@ -4,7 +4,8 @@
 import type { MarkType, Node as PMNode } from 'prosemirror-model';
 import type { Command, EditorState, Transaction } from 'prosemirror-state';
 import { freshIid } from '../core/ids';
-import { MILESTONES, schema } from '../core/schema';
+import { MILESTONES, leadingPageMarkers, schema } from '../core/schema';
+import { addSpan, joinAdjacentAt, joinAllAdjacent, notePartAt, padNoteToOneLine } from '../core/notes';
 import type { Page } from '../core/pageIndex';
 import { pageAt } from './pageCommands';
 
@@ -23,12 +24,6 @@ export const clearFormat: Command = (state, dispatch) => {
 };
 
 const isMilestone = (n: PMNode) => !n.isText && MILESTONES.has(n.type.name);
-/** Number of leading layout markers in a block (they stay before the '*' of a heading). */
-function leadingMilestones(block: PMNode): number {
-  let i = 0;
-  while (i < block.childCount && isMilestone(block.child(i))) i++;
-  return i;
-}
 /** True if the block content in [from, to) (positions inside it) has only layout markers. */
 function onlyMilestones(doc: PMNode, from: number, to: number): boolean {
   let ok = true;
@@ -65,7 +60,7 @@ export function setBlockLevel(level: number): Command {
       if (level === 0) {
         if (node.type.name !== 'paragraph') tr.setNodeMarkup(pos, schema.nodes.paragraph);
       } else if (node.type.name !== 'heading' || node.attrs.level !== level) {
-        tr.setNodeMarkup(pos, schema.nodes.heading, { level, prefix: leadingMilestones(node) });
+        tr.setNodeMarkup(pos, schema.nodes.heading, { level, prefix: leadingPageMarkers(node) });
       }
       return false;
     });
@@ -90,8 +85,41 @@ export function toggleSpanMark(name: SpanMark): Command {
     const { from, to, empty } = state.selection;
     if (empty) return false;
     const type = schema.marks[name];
-    const tr = rangeHasMark(state, type) ? state.tr.removeMark(from, to, type) : state.tr.addMark(from, to, type.create({ iid: freshIid() }));
+    const tr = rangeHasMark(state, type) ? state.tr.removeMark(from, to, type) : addSpan(state.tr, type, from, to, () => type.create({ iid: freshIid() }));
+    dispatch?.(tr as Transaction);
+    return true;
+  };
+}
+
+/** Join the note that starts at `pos` into the note right before it (`{{AB}}{{　}}` → `{{AB　}}`); no pos: all of them. */
+export function joinNotes(pos?: number): Command {
+  return (state, dispatch) => {
+    const tr = state.tr;
+    const ok = pos === undefined ? joinAllAdjacent(tr) > 0 : joinAdjacentAt(tr, pos);
+    if (!ok) return false;
     dispatch?.(tr);
+    return true;
+  };
+}
+
+/** Pad the note at the cursor with full-width spaces so its text takes only the first small line. */
+export const padNote: Command = (state, dispatch) => {
+  const part = notePartAt(state.doc, state.selection.from);
+  if (!part) return false;
+  const tr = state.tr;
+  if (!padNoteToOneLine(tr, part)) return false;
+  dispatch?.(tr.scrollIntoView());
+  return true;
+};
+
+/** Move the `*` of the heading at block position `pos` right after its leading page markers. */
+export function fixHeadingStars(pos: number): Command {
+  return (state, dispatch) => {
+    const node = state.doc.nodeAt(pos);
+    if (node?.type.name !== 'heading') return false;
+    const prefix = leadingPageMarkers(node);
+    if (prefix === node.attrs.prefix) return false;
+    dispatch?.(state.tr.setNodeMarkup(pos, null, { ...node.attrs, prefix }));
     return true;
   };
 }

@@ -8,6 +8,7 @@ import type { Page, Seg } from '../core/pageIndex';
 import { signal } from '@preact/signals';
 import { compareTextWidth, currentPage, cursorPos, getView, jumpTo, mappings, pages, showSeq, sideTab } from '../app/state';
 import { textRuns, stripPunct } from '../core/punct';
+import { columnCells, isSpace, layoutPage, noteLength, spaceRuns, type ColumnItem, type NoteCell } from '../core/columnLayout';
 import { PROOF_LABEL, proofStatus, setProofread } from '../app/proofread';
 import { imageUrlFor } from '../app/images';
 import { mergeWithPrevious, setLineY, shiftPageNumbers } from '../editor/commands';
@@ -35,64 +36,89 @@ function visibleSegs(segs: Seg[], keepPunct: boolean): Seg[] {
   return out;
 }
 
-const NOTE_MARKS = new Set(['note', 'margin']);
-const isNote = (s: Seg) => (s.k === 'text' || s.k === 'coll') && s.marks.some((m) => NOTE_MARKS.has(m));
-const cells = (s: string) => [...s].length;
-
-/** Column height in character cells (for sizing the page box). */
-function lineCells(segs: Seg[]): number {
-  let n = 0;
-  let note = 0;
-  for (const s of segs) {
-    if (isNote(s)) {
-      note += cells((s as { text: string }).text);
-      continue;
-    }
-    n += Math.ceil(note / 2);
-    note = 0;
-    if (s.k === 'text' || s.k === 'coll') n += cells(s.text);
-    else if (s.k === 'skip') n += s.n;
-  }
-  return n + Math.ceil(note / 2);
+function segClass(s: Extract<Seg, { k: 'text' | 'coll' }>) {
+  return [s.k === 'coll' ? 'v-coll' : '', s.k === 'text' && s.entity ? `v-ent v-ent-${s.entity}` : '', s.marks.includes('big') ? 'v-big' : ''].join(' ').trim();
 }
 
+const SPACE_TITLE: Record<string, string> = { ' ': '半形空格', '\u3000': '全形空格' };
+
+/** Text run; spaces are drawn as visible cells so padding can be checked. */
 function TextSeg({ s }: { s: Extract<Seg, { k: 'text' | 'coll' }> }) {
-  const cls = [s.k === 'coll' ? 'v-coll' : '', s.k === 'text' && s.entity ? `v-ent v-ent-${s.entity}` : '', s.marks.includes('big') ? 'v-big' : ''].join(' ').trim();
+  const cls = segClass(s) || undefined;
+  if (s.k === 'coll') {
+    return (
+      <span data-from={s.from} data-kind="coll" class={cls}>
+        {s.text}
+      </span>
+    );
+  }
   return (
-    <span data-from={s.from} data-kind={s.k} class={cls || undefined}>
-      {s.text}
+    <>
+      {spaceRuns(s.text).map((r) =>
+        r.space ? (
+          [...r.text].map((ch, i) => (
+            <span key={`${r.offset + i}`} data-from={s.from + r.offset + i} data-kind="text" class={`v-sp ${ch === ' ' ? 'half' : ''} ${cls ?? ''}`} title={SPACE_TITLE[ch]}>
+              {ch}
+            </span>
+          ))
+        ) : (
+          <span key={r.offset} data-from={s.from + r.offset} data-kind="text" class={cls}>
+            {r.text}
+          </span>
+        ),
+      )}
+    </>
+  );
+}
+
+function NoteLine({ cells }: { cells: NoteCell[] }) {
+  return (
+    <span class="v-nl">
+      {cells.map((c, i) =>
+        'sid' in c ? (
+          <span key={i} class="v-seq" title={`seq ${c.sid}`} />
+        ) : 'blank' in c ? (
+          <span key={i} data-from={c.pos} data-kind="skip" class="v-blank" title="scanskip（夾注內的空白格）">
+            {'\u3000'}
+          </span>
+        ) : (
+          <span
+            key={i}
+            data-from={c.pos}
+            data-kind={c.seg.k === 'text' ? 'text' : 'coll'}
+            class={[segClass(c.seg), isSpace(c.ch) ? `v-sp ${c.ch === ' ' ? 'half' : ''}` : ''].join(' ').trim() || undefined}
+            title={SPACE_TITLE[c.ch]}
+          >
+            {c.ch}
+          </span>
+        ),
+      )}
     </span>
   );
 }
 
-function Column({ segs }: { segs: Seg[] }) {
-  // group consecutive note segments into one double-line small block
-  const out: preact.JSX.Element[] = [];
-  let group: Seg[] = [];
-  const flush = () => {
-    if (!group.length) return;
-    const n = group.reduce((a, s) => a + cells((s as { text: string }).text), 0);
-    out.push(
-      <span class="v-note" style={{ height: `${Math.ceil(n / 2)}em` }} key={`n${out.length}`}>
-        {group.map((s, i) => (
-          <TextSeg key={i} s={s as Extract<Seg, { k: 'text' | 'coll' }>} />
-        ))}
-      </span>,
-    );
-    group = [];
-  };
-  segs.forEach((s, i) => {
-    if (isNote(s)) {
-      group.push(s);
-      return;
-    }
-    flush();
-    if (s.k === 'skip') out.push(<span key={i} class="v-skip" style={{ height: `${s.n}em` }} />);
-    else if (s.k === 'seq') out.push(<span key={i} class="v-seq" title={`seq ${s.sid}`} />);
-    else out.push(<TextSeg key={i} s={s} />);
-  });
-  flush();
-  return <>{out}</>;
+function Column({ items }: { items: ColumnItem[] }) {
+  return (
+    <>
+      {items.map((it, i) => {
+        if (it.k === 'note') {
+          const len = (l: NoteCell[]) => l.filter((c) => !('sid' in c)).length;
+          const [a, b] = [len(it.lines[0]), len(it.lines[1])];
+          const how = it.explicit ? '（夾注內的 scanbreak 分行）' : '';
+          return (
+            <span key={i} class={`v-note ${it.explicit ? 'split' : ''}`} style={{ height: `${Math.max(noteLength(it), 1)}em` }} title={`夾注 ${it.cells} 字格：第一行 ${a}、第二行 ${b}${how}`}>
+              <NoteLine cells={it.lines[0]} />
+              <NoteLine cells={it.lines[1]} />
+            </span>
+          );
+        }
+        const s = it.seg;
+        if (s.k === 'skip') return <span key={i} class="v-skip" style={{ height: `${s.n}em` }} title={`scanskip ${s.n}`} />;
+        if (s.k === 'seq') return <span key={i} class="v-seq" title={`seq ${s.sid}`} />;
+        return <TextSeg key={i} s={s} />;
+      })}
+    </>
+  );
 }
 
 /** Editor position under a click in the vertical text. */
@@ -113,8 +139,20 @@ function posFromClick(e: MouseEvent): number | null {
   return el.dataset.kind === 'text' && node?.nodeType === Node.TEXT_NODE ? from + offset : from;
 }
 
-/** Column of the page that holds the editor cursor, or -1 if the cursor is on another page. */
+/** Physical columns of a page (a note split by a scanbreak may join two source lines). */
+const pageColumns = (page: Page, keepPunct = true) => layoutPage(page.lines, (segs) => visibleSegs(segs, keepPunct));
+
+/**
+ * Column of the page that holds the editor cursor (as the index of its first
+ * source line), or -1 if the cursor is on another page.
+ */
 export function cursorLine(page: Page, pos: number): number {
+  const line = sourceLineAt(page, pos);
+  if (line < 0) return line;
+  return pageColumns(page).find((c) => c.lines.includes(line))?.lines[0] ?? line;
+}
+
+function sourceLineAt(page: Page, pos: number): number {
   if (pos < (page.markerPos ?? page.from) || pos > page.to) return -1;
   let cur = 0;
   page.lines.forEach((l, i) => {
@@ -133,11 +171,12 @@ function runCmd(c: ReturnType<typeof setLineY>) {
 
 export function PageText({ page }: { page: Page }) {
   const keep = showPunct.value;
-  const lines = page.lines.map((l) => ({ ...l, segs: visibleSegs(l.segs, keep) }));
-  const height = Math.max(10, ...lines.map((l) => l.y + lineCells(l.segs))) + 1;
+  const cols = pageColumns(page, keep);
+  const height = Math.max(10, ...cols.map((c) => c.y + columnCells(c.items))) + 1;
   const curLine = cursorLine(page, cursorPos.value);
-  const goLine = (i: number) => {
-    const l = page.lines[i];
+  const curCol = cols.findIndex((c) => c.lines[0] === curLine);
+  const goCol = (i: number) => {
+    const l = cols[i] && page.lines[cols[i].lines[0]];
     if (l) jumpTo(l.from, 'cursor', false);
   };
   const setY = (d: number) => {
@@ -148,7 +187,7 @@ export function PageText({ page }: { page: Page }) {
     <div
       class={`vpage ${showSeq.value ? '' : 'hide-seq'}`}
       // explicit size: an auto-sized vertical box is not re-measured reliably when the page changes
-      style={{ height: `${height}em`, width: `calc(${lines.length} * (1.55em + 3px) + 0.8em)` }}
+      style={{ height: `${height}em`, width: `calc(${cols.length} * (1.55em + 3px) + 0.8em)` }}
       tabIndex={0}
       aria-label="原典版面：點選一列後，↑↓ 調整該列開頭空格（y），←→ 換列"
       onClick={(e) => {
@@ -159,15 +198,15 @@ export function PageText({ page }: { page: Page }) {
       onKeyDown={(e) => {
         const k = e.key;
         if (k === 'ArrowDown' || k === 'ArrowUp') setY(k === 'ArrowDown' ? 1 : -1);
-        else if (k === 'ArrowLeft' || k === 'ArrowRight') goLine(Math.max(0, curLine) + (k === 'ArrowLeft' ? 1 : -1));
+        else if (k === 'ArrowLeft' || k === 'ArrowRight') goCol(Math.max(0, curCol) + (k === 'ArrowLeft' ? 1 : -1));
         else if (k === 'Enter') getView()?.focus();
         else return;
         e.preventDefault();
       }}
     >
-      {lines.map((l, i) => (
-        <div key={i} class={`vcol ${i === curLine ? 'cur' : ''}`} style={{ paddingInlineStart: `${l.y}em` }}>
-          <Column segs={l.segs} />
+      {cols.map((c, i) => (
+        <div key={i} class={`vcol ${i === curCol ? 'cur' : ''}`} style={{ paddingInlineStart: `${c.y}em` }}>
+          <Column items={c.items} />
         </div>
       ))}
     </div>
@@ -178,13 +217,15 @@ export function PageText({ page }: { page: Page }) {
 function LineControl({ page }: { page: Page }) {
   const line = cursorLine(page, cursorPos.value);
   if (line < 0) return <span class="muted small linectl">點選一列可調整空格</span>;
+  const cols = pageColumns(page);
+  const col = cols.findIndex((c) => c.lines[0] === line);
   const can = yMarker(page, line) !== null;
   const y = page.lines[line].y;
   const set = (n: number) => runCmd(setLineY(page, line, Math.max(0, n)));
   return (
     <span class="linectl row tight" title={line === 0 ? '本頁第一列：調整 scanbegin 的 y' : '調整這一列開頭 scanbreak 的 y'}>
       <span class="small">
-        第 {line + 1}/{page.lines.length} 列 空格
+        第 {col + 1}/{cols.length} 列 空格
       </span>
       <button onClick={() => set(y - 1)} disabled={!can || y === 0} aria-label="空格減一">
         −

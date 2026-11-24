@@ -17,6 +17,8 @@ import {
   entityAt,
   insertScanBreak,
   insertScanSkip,
+  joinNotes,
+  padNote,
   removeEntity,
   setNodeAttrs,
   toggleSpanMark,
@@ -24,6 +26,7 @@ import {
   type SpanMark,
 } from '../editor/commands';
 import { splitPage } from '../editor/pageCommands';
+import { notePartAt } from '../core/notes';
 
 function run(cmd: Command) {
   const v = getView();
@@ -50,6 +53,7 @@ export function Toolbar() {
   const v = getView();
   const hasSel = !!v && !v.state.selection.empty;
   const level = v ? blockLevel(v.state) : 0;
+  const inNote = !!v && !!notePartAt(v.state.doc, v.state.selection.from);
   return (
     <div class="toolbar-wrap">
       <div class="toolbar" role="toolbar" aria-label="編輯工具">
@@ -72,6 +76,14 @@ export function Toolbar() {
         <button disabled={!hasSel} onClick={() => run(toggleSpanMark('note'))} title="{{ }} 夾注：底本中的註釋，小字（選取文字後套用／取消）">
           夾注
         </button>
+        <Menu label="夾注排版" title="夾注內的空格與分段">
+          <button disabled={!inNote} onClick={() => run(padNote)} title="依夾注字數 N 在後面補 N−1 個全形空格，讓文字只排在雙行夾注的第一行：{{ABCD}} → {{ABCD　　　}}。夾注跨列時只處理游標所在的那一列。">
+            排成單行（補空格）
+          </button>
+          <button onClick={() => run(joinNotes())} title="把緊鄰的兩段夾注合併成一段：{{AB}}{{　}} → {{AB　}}">
+            合併緊鄰的夾注
+          </button>
+        </Menu>
         <button disabled={!hasSel} onClick={() => run(clearFormat)} title="清除選取範圍的夾注、大字、邊注、反白、畫圈，變回一般文字（Ctrl+\）。entity 標註保留。">
           清除格式
         </button>

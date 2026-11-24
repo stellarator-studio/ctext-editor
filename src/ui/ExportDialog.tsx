@@ -1,10 +1,10 @@
 import { useEffect, useMemo, useRef, useState } from 'preact/hooks';
 import { structuralChanges, textHunks } from '../core/changes';
 import { toDoc } from '../core/toDoc';
-import { currentText, exportOpen, getView, project, updateProject } from '../app/state';
+import { chapter, chapters, currentText, exportOpen, getView, updateChapter } from '../app/state';
 
 export function ExportDialog() {
-  const p = project.value!;
+  const p = chapter.value!;
   const text = useMemo(() => currentText(), []);
   const hunks = useMemo(() => textHunks(p.originalText, text), [text]);
   const changes = useMemo(() => structuralChanges(p.originalText, getView()?.state.doc ?? toDoc(text)), [text]);
@@ -37,7 +37,7 @@ export function ExportDialog() {
   return (
     <dialog ref={ref} class="export" onClose={close} onCancel={close}>
       <header class="row spread">
-        <h2>匯出 cText 格式</h2>
+        <h2>匯出 cText 格式{chapters.value.length > 1 ? `：${p.title}` : ''}</h2>
         <button class="link" onClick={close} aria-label="關閉">
           ✕
         </button>
@@ -74,7 +74,7 @@ export function ExportDialog() {
         <button
           onClick={() => {
             if (confirm('已把文字貼回 cText 並儲存了嗎？之後的差異會改以目前文字為基準。')) {
-              updateProject({ originalText: text });
+              updateChapter({ originalText: text });
               close();
             }
           }}

@@ -67,7 +67,8 @@ export const schema = new Schema({
       content: 'inline*',
       /**
        * level = number of '*'. prefix = number of leading inline nodes that
-       * precede the '*' marker in the source (e.g. a <scanbegin/> at file start).
+       * precede the '*' marker in the source. Only page markers belong there
+       * (`<scanbegin/>*<seq/>…`); see leadingPageMarkers.
        */
       attrs: { level: { default: 1 }, prefix: { default: 0 } },
       toDOM: (n) => [`h${Math.min(n.attrs.level + 1, 6)}`, dataAttrs('heading', n.attrs), 0],
@@ -136,3 +137,15 @@ export const schema = new Schema({
 
 /** Inline node types that carry layout/anchor information rather than text. */
 export const MILESTONES = new Set(['pageStart', 'pageEnd', 'pageBoundary', 'scanBreak', 'scanSkip', 'seq', 'tag']);
+
+const PAGE_MARKERS = new Set(['pageStart', 'pageBoundary', 'pageEnd']);
+/**
+ * Number of page markers at the start of a block. A heading's `*` goes right
+ * after them and before anything else, `<seq/>` and `<scanbreak/>` included
+ * (`<scanbegin/>*<seq/>標題`, `**<scanbreak/><seq/>標題`).
+ */
+export function leadingPageMarkers(block: PMNode): number {
+  let i = 0;
+  while (i < block.childCount && PAGE_MARKERS.has(block.child(i).type.name)) i++;
+  return i;
+}

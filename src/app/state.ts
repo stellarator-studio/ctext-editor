@@ -22,16 +22,21 @@ import { pasteGuard } from '../editor/paste';
 import { pageGuard } from '../editor/pageGuard';
 import { deleteAdjacentAtom } from '../editor/atomCommands';
 import { splitPage } from '../editor/pageCommands';
-import { listDictionary, listMappings, saveProject } from '../store/projects';
+import { deleteChapter, listChapters, listDictionary, listMappings, newChapter, saveChapter, saveProject } from '../store/projects';
 import type { DictEntry } from '../core/annotate';
 import { clickBreak } from '../editor/clickBreak';
 import { searchHighlight } from '../editor/search';
+import { layoutHints } from '../editor/layoutHints';
 import { clearFormat, insertScanBreak, setBlockLevel } from '../editor/commands';
-import type { FileMapping, Project } from '../store/db';
+import type { Chapter, FileMapping, Project } from '../store/db';
 
 // ---------------------------------------------------------------- signals
 
 export const project = signal<Project | null>(null);
+/** chapters of the open project, in order */
+export const chapters = signal<Chapter[]>([]);
+/** the chapter being edited */
+export const chapter = signal<Chapter | null>(null);
 export const pages = signal<Page[]>([]);
 export const diagnostics = signal<Diagnostic[]>([]);
 export const currentPage = signal(0);
@@ -68,6 +73,8 @@ export const sourceTick = signal(0);
 // ---------------------------------------------------------------- editor
 
 let view: EditorView | null = null;
+/** chapter the mounted editor shows (it lags behind `chapter` until the editor remounts) */
+let viewChapter: string | null = null;
 export const getView = () => view;
 
 function plugins() {
@@ -93,6 +100,7 @@ function plugins() {
     }),
     keymap(baseKeymap),
     searchHighlight(),
+    layoutHints(),
     dropCursor({ color: '#d9822b', width: 3 }),
     clickBreak(() => breakMode.value),
   ];
@@ -118,8 +126,9 @@ function syncSelection(state: EditorState) {
   });
 }
 
-export function mountEditor(el: HTMLElement, state: EditorState) {
+export function mountEditor(el: HTMLElement, state: EditorState, chapterId: string) {
   view?.destroy();
+  viewChapter = chapterId;
   view = new EditorView(el, {
     state,
     dispatchTransaction(tr: Transaction) {
@@ -142,6 +151,7 @@ export function mountEditor(el: HTMLElement, state: EditorState) {
 export function unmountEditor() {
   view?.destroy();
   view = null;
+  viewChapter = null;
 }
 
 /** Move the editor cursor to `pos` and scroll it into view. */
@@ -160,8 +170,8 @@ export function jumpTo(pos: number, select: 'cursor' | 'node' = 'cursor', focus 
 }
 
 export function currentText(): string {
-  if (mode.value === 'source') return sourceTextGetter?.() ?? project.value?.text ?? '';
-  return view ? serialize(view.state.doc) : (project.value?.text ?? '');
+  if (mode.value === 'source') return sourceTextGetter?.() ?? chapter.value?.text ?? '';
+  return view && viewChapter === chapter.value?.id ? serialize(view.state.doc) : (chapter.value?.text ?? '');
 }
 
 /** Set by the source view while it is active. */
@@ -183,22 +193,69 @@ export function scheduleSave() {
 export async function saveNow() {
   clearTimeout(saveTimer);
   const p = project.value;
+  const c = chapter.value;
   if (!p) return;
   saveStatus.value = 'saving';
   try {
-    project.value = await saveProject({ ...p, text: currentText() });
+    if (c) {
+      const saved = await saveChapter({ ...c, text: currentText() });
+      // the user may have switched chapters while saving
+      if (chapter.value?.id === saved.id) chapter.value = saved;
+      chapters.value = chapters.value.map((x) => (x.id === saved.id ? saved : x));
+    }
+    project.value = await saveProject({ ...project.value!, chapters: chapters.value.map((x) => x.id) });
     saveStatus.value = 'saved';
   } catch {
     saveStatus.value = 'error';
   }
 }
 
-/** Update project metadata (title, proofreading, …) and save. */
+/** Update project metadata shared by all chapters (title, rejected candidates, …) and save. */
 export function updateProject(patch: Partial<Project>) {
   const p = project.value;
   if (!p) return;
   project.value = { ...p, ...patch };
   scheduleSave();
+}
+
+/** Update the current chapter (title, proofreading, baseline, …) and save. */
+export function updateChapter(patch: Partial<Chapter>) {
+  const c = chapter.value;
+  if (!c) return;
+  const next = { ...c, ...patch };
+  chapter.value = next;
+  chapters.value = chapters.value.map((x) => (x.id === next.id ? next : x));
+  scheduleSave();
+}
+
+/** Load a project and its chapters; open `chapterId` or the first chapter. */
+export async function loadProject(p: Project | null, chapterId?: string | null) {
+  if (!p) {
+    batch(() => {
+      project.value = null;
+      chapters.value = [];
+      chapter.value = null;
+    });
+    return;
+  }
+  const list = await listChapters(p);
+  batch(() => {
+    project.value = p;
+    chapters.value = list;
+    chapter.value = list.find((c) => c.id === chapterId) ?? list[0] ?? null;
+  });
+}
+
+/**
+ * Switch to another chapter of the open project. Pending edits are saved
+ * first; raw-text mode is left first so its edits are kept.
+ */
+export async function switchChapter(id: string) {
+  if (chapter.value?.id === id) return;
+  if (mode.value === 'source') document.dispatchEvent(new CustomEvent('ct-leave-source'));
+  await saveNow();
+  const next = chapters.value.find((c) => c.id === id);
+  if (next) chapter.value = next;
 }
 
 export async function loadDictionary() {
@@ -251,4 +308,47 @@ if (typeof window !== 'undefined') {
       e.preventDefault();
     }
   });
+}
+
+// ---------------------------------------------------------------- chapters
+
+/** Add a chapter at the end of the open project and switch to it. */
+export async function addChapter(text: string, title: string) {
+  const p = project.value;
+  if (!p) return;
+  await saveNow();
+  const c = await saveChapter(newChapter(p.id, text, title));
+  chapters.value = [...chapters.value, c];
+  project.value = await saveProject({ ...project.value!, chapters: chapters.value.map((x) => x.id) });
+  await switchChapter(c.id);
+}
+
+export function renameChapter(id: string, title: string) {
+  if (chapter.value?.id === id) return updateChapter({ title });
+  const c = chapters.value.find((x) => x.id === id);
+  if (!c) return;
+  chapters.value = chapters.value.map((x) => (x.id === id ? { ...x, title } : x));
+  void saveChapter({ ...c, title });
+}
+
+/** Move a chapter up (−1) or down (+1) in the project's order. */
+export function moveChapter(id: string, delta: number) {
+  const list = [...chapters.value];
+  const i = list.findIndex((c) => c.id === id);
+  const j = i + delta;
+  if (i < 0 || j < 0 || j >= list.length) return;
+  [list[i], list[j]] = [list[j], list[i]];
+  chapters.value = list;
+  updateProject({ chapters: list.map((c) => c.id) });
+}
+
+/** Delete a chapter (not the last one). The current chapter moves to a neighbour first. */
+export async function removeChapter(id: string) {
+  const list = chapters.value;
+  const i = list.findIndex((c) => c.id === id);
+  if (i < 0 || list.length < 2) return;
+  if (chapter.value?.id === id) await switchChapter(list[i + 1]?.id ?? list[i - 1].id);
+  chapters.value = chapters.value.filter((c) => c.id !== id);
+  await deleteChapter(id);
+  project.value = await saveProject({ ...project.value!, chapters: chapters.value.map((c) => c.id) });
 }

@@ -1,35 +1,28 @@
 import { useEffect, useState } from 'preact/hooks';
-import type { Project } from '../store/db';
+import type { Chapter, Project } from '../store/db';
 import { persistent } from '../store/db';
-import { deleteProject, downloadProject, guessTitle, importProjectFile, listProjects, newProject, saveProject } from '../store/projects';
-import { toDoc } from '../core/toDoc';
-import { buildPageIndex } from '../core/pageIndex';
+import { createProject, deleteProject, downloadProject, importProjectFile, listChapters, listProjects } from '../store/projects';
 import { openProject } from './App';
 import { loadDictionary, loadMappings } from '../app/state';
-import { hasScanTags, plainToCtext, type PlainOptions } from '../core/plainText';
+import { TextImport, textSummary } from './TextImport';
 
-function summary(text: string) {
-  const pages = buildPageIndex(toDoc(text)).filter((p) => p.markerPos !== null).length;
-  return `${text.length.toLocaleString()} 字元・${pages} 頁`;
+type Row = { p: Project; chapters: Chapter[] };
+
+function rowSummary({ chapters }: Row) {
+  const done = chapters.reduce((n, c) => n + Object.values(c.proofread).filter((s) => s.done).length, 0);
+  const text = chapters.length === 1 ? textSummary(chapters[0].text) : `${chapters.length} 章・${textSummary(chapters.map((c) => c.text).join('\n'))}`;
+  return `${text}・已校對 ${done} 頁`;
 }
 
 export function Home() {
-  const [list, setList] = useState<Project[]>([]);
-  const [text, setText] = useState('');
-  const [title, setTitle] = useState('');
+  const [list, setList] = useState<Row[]>([]);
   const [error, setError] = useState('');
-  const [plain, setPlain] = useState<PlainOptions & { convert: boolean }>({ convert: true, file: '', startPage: 1, linesAreColumns: true, blankLineIsPage: true });
-  const isPlain = text.trim() !== '' && !hasScanTags(text);
-  const finalText = () => (isPlain && plain.convert ? plainToCtext(text, plain) : text);
-  const setOpt = (patch: Partial<typeof plain>) => setPlain({ ...plain, ...patch });
 
-  const refresh = async () => setList(await listProjects());
+  const refresh = async () => setList(await Promise.all((await listProjects()).map(async (p) => ({ p, chapters: await listChapters(p) }))));
   useEffect(() => void refresh(), []);
 
-  const create = async () => {
-    if (!text.trim()) return;
-    const t = finalText();
-    const p = await saveProject(newProject(t, title.trim() || guessTitle(text)));
+  const create = async (text: string, title: string) => {
+    const p = await createProject(text, title);
     openProject(p.id);
   };
 
@@ -63,47 +56,8 @@ export function Home() {
 
       <section class="card">
         <h2>新專案</h2>
-        <label class="field">
-          <span>標題（可留空，自動取第一個標題）</span>
-          <input value={title} onInput={(e) => setTitle((e.target as HTMLInputElement).value)} />
-        </label>
-        <label class="field">
-          <span>從 cText 編輯框複製的文字</span>
-          <textarea id="newText" rows={8} value={text} onInput={(e) => setText((e.target as HTMLTextAreaElement).value)} placeholder="<scanbegin file=… page=… />…" />
-        </label>
-        {isPlain && (
-          <fieldset class="plain-opts">
-            <legend>這段文字沒有 scan 標籤（例如 OCR 文字）</legend>
-            <label class="check">
-              <input type="checkbox" id="plainConvert" checked={plain.convert} onChange={(e) => setOpt({ convert: (e.target as HTMLInputElement).checked })} />
-              加上頁與換行標記，之後可用「點擊斷行」對照圖片調整
-            </label>
-            {plain.convert && (
-              <div class="row tight">
-                <label class="ifield">
-                  <span>file id</span>
-                  <input id="plainFile" value={plain.file} onInput={(e) => setOpt({ file: (e.target as HTMLInputElement).value.trim() })} size={9} placeholder="cText 掃描檔號" />
-                </label>
-                <label class="ifield">
-                  <span>起始頁</span>
-                  <input type="number" min={0} value={plain.startPage} onInput={(e) => setOpt({ startPage: Number((e.target as HTMLInputElement).value) || 1 })} style={{ width: '5em' }} />
-                </label>
-                <label class="check small">
-                  <input type="checkbox" checked={plain.linesAreColumns} onChange={(e) => setOpt({ linesAreColumns: (e.target as HTMLInputElement).checked })} /> 每行＝原書一列
-                </label>
-                <label class="check small">
-                  <input type="checkbox" checked={plain.blankLineIsPage} onChange={(e) => setOpt({ blankLineIsPage: (e.target as HTMLInputElement).checked })} /> 空行＝換頁
-                </label>
-              </div>
-            )}
-          </fieldset>
-        )}
-        <div class="row">
-          <button class="primary" id="create" disabled={!text.trim() || (isPlain && plain.convert && !plain.file)} onClick={create}>
-            建立並開啟
-          </button>
-          {text.trim() && <span class="muted">{summary(finalText())}</span>}
-        </div>
+        <p class="muted small">一部作品可以分成多個章節（各自對應 cText 的一個編輯框）。先貼上第一章，其他章節之後在專案中「＋ 加入章節」。</p>
+        <TextImport titleLabel="標題（可留空，自動取第一個標題）" submitLabel="建立並開啟" onSubmit={create} />
       </section>
 
       <section class="card">
@@ -119,16 +73,16 @@ export function Home() {
           <p class="muted">尚無專案。</p>
         ) : (
           <ul class="project-list">
-            {list.map((p) => (
+            {list.map(({ p, chapters }) => (
               <li key={p.id}>
                 <a href={`#p=${encodeURIComponent(p.id)}`} class="project-title">
                   {p.title}
                 </a>
                 <span class="muted">
-                  {summary(p.text)}・已校對 {Object.values(p.proofread).filter((s) => s.done).length} 頁・{new Date(p.updatedAt).toLocaleString()}
+                  {rowSummary({ p, chapters })}・{new Date(p.updatedAt).toLocaleString()}
                 </span>
                 <span class="row tight">
-                  <button onClick={() => downloadProject(p)} title="專案檔包含文字、校對狀態、用到的圖片對照與字典">匯出</button>
+                  <button onClick={() => downloadProject(p)} title="專案檔包含所有章節的文字與校對狀態、用到的圖片對照與字典">匯出</button>
                   <button
                     class="danger"
                     onClick={async () => {
